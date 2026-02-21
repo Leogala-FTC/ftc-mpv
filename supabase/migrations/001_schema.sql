@@ -1,25 +1,61 @@
 create extension if not exists pgcrypto;
 
-create type public.app_role as enum ('user','merchant','admin');
-create type public.tx_type as enum ('spend','topup');
-create type public.payment_status as enum ('pending','paid','expired','cancelled');
-create type public.clearing_status as enum ('pending','approved','rejected','paid');
+-- ENUM types (controllo anche lo schema public)
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_type t
+    join pg_namespace n on n.oid = t.typnamespace
+    where t.typname = 'app_role' and n.nspname = 'public'
+  ) then
+    create type public.app_role as enum ('user','merchant','admin');
+  end if;
 
-create table public.profiles (
+  if not exists (
+    select 1
+    from pg_type t
+    join pg_namespace n on n.oid = t.typnamespace
+    where t.typname = 'tx_type' and n.nspname = 'public'
+  ) then
+    create type public.tx_type as enum ('spend','topup');
+  end if;
+
+  if not exists (
+    select 1
+    from pg_type t
+    join pg_namespace n on n.oid = t.typnamespace
+    where t.typname = 'payment_status' and n.nspname = 'public'
+  ) then
+    create type public.payment_status as enum ('pending','paid','expired','cancelled');
+  end if;
+
+  if not exists (
+    select 1
+    from pg_type t
+    join pg_namespace n on n.oid = t.typnamespace
+    where t.typname = 'clearing_status' and n.nspname = 'public'
+  ) then
+    create type public.clearing_status as enum ('pending','approved','rejected','paid');
+  end if;
+end $$;
+
+-- TABLES (idempotenti: non esplodono se esistono già)
+create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   role public.app_role not null default 'user',
   name text not null,
   created_at timestamptz not null default now()
 );
 
-create table public.merchants (
+create table if not exists public.merchants (
   id uuid primary key,
   name text not null,
   status text not null default 'active',
   created_at timestamptz not null default now()
 );
 
-create table public.merchant_staff (
+create table if not exists public.merchant_staff (
   merchant_id uuid not null references public.merchants(id) on delete cascade,
   user_id uuid not null references auth.users(id) on delete cascade,
   role text not null default 'staff',
@@ -27,26 +63,26 @@ create table public.merchant_staff (
   primary key (merchant_id, user_id)
 );
 
-create table public.user_wallets (
+create table if not exists public.user_wallets (
   user_id uuid primary key references auth.users(id) on delete cascade,
   balance_tokens numeric(18,2) not null default 0,
   updated_at timestamptz not null default now()
 );
 
-create table public.merchant_wallets (
+create table if not exists public.merchant_wallets (
   merchant_id uuid primary key references public.merchants(id) on delete cascade,
   available_tokens numeric(18,2) not null default 0,
   pending_tokens numeric(18,2) not null default 0,
   updated_at timestamptz not null default now()
 );
 
-create table public.treasury_wallet (
+create table if not exists public.treasury_wallet (
   id int primary key check (id = 1),
   balance_tokens numeric(18,2) not null default 0,
   updated_at timestamptz not null default now()
 );
 
-create table public.token_transactions (
+create table if not exists public.token_transactions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references auth.users(id) on delete set null,
   merchant_id uuid references public.merchants(id) on delete set null,
@@ -56,7 +92,7 @@ create table public.token_transactions (
   metadata jsonb not null default '{}'::jsonb
 );
 
-create table public.payment_sessions (
+create table if not exists public.payment_sessions (
   id uuid primary key default gen_random_uuid(),
   merchant_id uuid not null references public.merchants(id) on delete cascade,
   amount_eur numeric(10,2) not null,
@@ -67,7 +103,7 @@ create table public.payment_sessions (
   created_by uuid not null references auth.users(id)
 );
 
-create table public.receipts (
+create table if not exists public.receipts (
   id uuid primary key default gen_random_uuid(),
   session_id uuid not null unique references public.payment_sessions(id) on delete cascade,
   user_id uuid not null references auth.users(id),
@@ -77,14 +113,14 @@ create table public.receipts (
   created_at timestamptz not null default now()
 );
 
-create table public.merchant_pricing (
+create table if not exists public.merchant_pricing (
   merchant_id uuid not null references public.merchants(id) on delete cascade,
   amount_eur numeric(10,2) not null,
   cost_tokens numeric(18,2) not null,
   primary key (merchant_id, amount_eur)
 );
 
-create table public.topup_packs (
+create table if not exists public.topup_packs (
   id int primary key,
   name text not null,
   tokens numeric(18,2) not null,
@@ -92,13 +128,13 @@ create table public.topup_packs (
   is_active boolean not null default true
 );
 
-create table public.app_settings (
+create table if not exists public.app_settings (
   id int primary key check (id = 1),
   token_eur_rate_estimate numeric(10,4) not null default 0.02,
   session_ttl_seconds int not null default 90
 );
 
-create table public.clearing_requests (
+create table if not exists public.clearing_requests (
   id uuid primary key default gen_random_uuid(),
   merchant_id uuid not null references public.merchants(id),
   requested_tokens numeric(18,2) not null check (requested_tokens > 0),
