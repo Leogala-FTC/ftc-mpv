@@ -1,0 +1,2 @@
+export const SUPPORTED_AMOUNTS_EUR = [5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 20, 25] as const;
+export const MERCHANT_1_ID = "00000000-0000-0000-0000-000000000001";

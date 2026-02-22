@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-ftc-bg text-ftc-bordeaux;
+}
+
+.card {
+  @apply rounded-2xl border border-ftc-soap bg-white p-4 shadow-sm;
+}
+
+.btn-primary {
+  @apply rounded-xl bg-ftc-viola px-4 py-3 text-white font-semibold;
+}
+
+.btn-secondary {
+  @apply rounded-xl border border-ftc-oro px-4 py-3 text-ftc-bordeaux font-semibold;
+}
