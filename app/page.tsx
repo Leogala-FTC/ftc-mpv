@@ -6,20 +6,22 @@ import { FormEvent, useState } from "react";
 import { getSupabaseClient } from "@/lib/supabase-client";
 
 type AuthTab = "login" | "register";
-type LoginRole = "user" | "merchant";
 type ProfileRole = "user" | "merchant" | "admin";
+
+type ProfileRow = {
+  role: ProfileRole | null;
+  onboarding_completed: boolean | null;
+};
 
 export default function Home() {
   const router = useRouter();
   const [tab, setTab] = useState<AuthTab>("login");
-  const [loginRole, setLoginRole] = useState<LoginRole>("user");
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [registerEmail, setRegisterEmail] = useState("");
   const [registerPassword, setRegisterPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -40,12 +42,23 @@ export default function Home() {
 
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
-      .select("role,onboarded")
+      .select("role,onboarding_completed")
       .eq("id", data.user.id)
-      .maybeSingle<{ role: ProfileRole; onboarded: boolean }>();
+      .maybeSingle<ProfileRow>();
 
-    if (profileError || !profile || !profile.onboarded) {
-      router.push(`/onboarding?role=${loginRole}`);
+    const shouldOnboard =
+      Boolean(profileError) ||
+      !profile ||
+      !profile.role ||
+      profile.onboarding_completed !== true;
+
+    if (shouldOnboard) {
+      router.push("/onboarding");
+      return;
+    }
+
+    if (profile.role === "user") {
+      router.push("/user");
       return;
     }
 
@@ -59,7 +72,7 @@ export default function Home() {
       return;
     }
 
-    router.push("/user");
+    router.push("/onboarding");
   };
 
   const handleRegister = async (event: FormEvent<HTMLFormElement>) => {
@@ -68,9 +81,13 @@ export default function Home() {
     setLoading(true);
 
     const supabase = getSupabaseClient();
+    const origin = window.location.origin;
     const { error: signUpError } = await supabase.auth.signUp({
       email: registerEmail,
       password: registerPassword,
+      options: {
+        emailRedirectTo: `${origin}/auth/callback`,
+      },
     });
 
     if (signUpError) {
@@ -106,27 +123,6 @@ export default function Home() {
 
         {tab === "login" ? (
           <form className="space-y-3" onSubmit={handleLogin}>
-            <fieldset className="flex gap-4 text-sm">
-              <label className="inline-flex items-center gap-2">
-                <input
-                  checked={loginRole === "user"}
-                  name="role"
-                  onChange={() => setLoginRole("user")}
-                  type="radio"
-                />
-                User
-              </label>
-              <label className="inline-flex items-center gap-2">
-                <input
-                  checked={loginRole === "merchant"}
-                  name="role"
-                  onChange={() => setLoginRole("merchant")}
-                  type="radio"
-                />
-                Merchant
-              </label>
-            </fieldset>
-
             <input
               className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
               onChange={(event) => setLoginEmail(event.target.value)}
