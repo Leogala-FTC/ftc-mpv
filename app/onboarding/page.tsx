@@ -9,7 +9,6 @@ type AnyRole = Role | "admin";
 type Step = 1 | 2;
 
 type ProfileRow = {
-  id?: string;
   user_id?: string;
   role: AnyRole | null;
   onboarding_completed: boolean | null;
@@ -111,19 +110,11 @@ export default function OnboardingPage() {
 
       const { data: byIdProfile } = await supabase
         .from("profiles")
-        .select("id,user_id,role,onboarding_completed")
-        .eq("id", userId)
+                .select("user_id,role,onboarding_completed")
+        .eq("user_id", userId)
         .maybeSingle<ProfileRow>();
 
-      const profile =
-        byIdProfile ??
-        (
-          await supabase
-            .from("profiles")
-            .select("id,user_id,role,onboarding_completed")
-            .eq("user_id", userId)
-            .maybeSingle<ProfileRow>()
-        ).data;
+      const profile = byIdProfile;
 
       if (profile?.onboarding_completed && profile.role) {
         redirectByRole(profile.role, router);
@@ -216,22 +207,15 @@ export default function OnboardingPage() {
             sector: merchantForm.sector,
           };
 
-    const idUpdate = await supabase.from("profiles").update(payload).eq("id", userId).select("id").maybeSingle();
+    const userIdUpdate = await supabase
+      .from("profiles")
+      .update(payload)
+      .eq("user_id", userId)
+      .select("user_id")
+      .maybeSingle();
 
-    let updateError = idUpdate.error;
-    let updated = Boolean(idUpdate.data);
-
-    if (!updated) {
-      const userIdUpdate = await supabase
-        .from("profiles")
-        .update(payload)
-        .eq("user_id", userId)
-        .select("id")
-        .maybeSingle();
-
-      updateError = userIdUpdate.error;
-      updated = Boolean(userIdUpdate.data);
-    }
+    const updateError = userIdUpdate.error;
+    const updated = Boolean(userIdUpdate.data);
 
     if (updateError || !updated) {
       setError(updateError?.message ?? "Impossibile completare l'onboarding. Riprova.");
