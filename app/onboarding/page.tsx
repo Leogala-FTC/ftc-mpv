@@ -18,7 +18,7 @@ type ProfileRow = {
 type UserForm = {
   full_name: string;
   alias: string;
-  use_alias_only: boolean;
+  show_alias_only: boolean;
   codice_fiscale: string;
   address: string;
   city: string;
@@ -52,7 +52,7 @@ const SECTOR_OPTIONS = [
 const INITIAL_USER_FORM: UserForm = {
   full_name: "",
   alias: "",
-  use_alias_only: false,
+  show_alias_only: false,
   codice_fiscale: "",
   address: "",
   city: "",
@@ -197,7 +197,7 @@ export default function OnboardingPage() {
             onboarding_completed: true,
             full_name: userForm.full_name.trim(),
             alias: userForm.alias.trim() || null,
-            use_alias_only: userForm.use_alias_only,
+            show_alias_only: userForm.show_alias_only,
             codice_fiscale: userForm.codice_fiscale.trim(),
             address: userForm.address.trim(),
             city: userForm.city.trim(),
@@ -317,11 +317,11 @@ export default function OnboardingPage() {
                 />
                 <label className="flex items-center gap-2 text-sm text-gray-700">
                   <input
-                    checked={userForm.use_alias_only}
+                    checked={userForm.show_alias_only}
                     onChange={(event) =>
                       setUserForm((current) => ({
                         ...current,
-                        use_alias_only: event.target.checked,
+                        show_alias_only: event.target.checked,
                       }))
                     }
                     type="checkbox"
