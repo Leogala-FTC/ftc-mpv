@@ -43,7 +43,7 @@ export default function Home() {
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
       .select("role,onboarding_completed")
-      .eq("id", data.user.id)
+      .eq("user_id", data.user.id)
       .maybeSingle<ProfileRow>();
 
     const shouldOnboard =
