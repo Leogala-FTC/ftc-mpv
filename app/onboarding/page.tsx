@@ -23,6 +23,8 @@ type UserForm = {
   city: string;
 };
 
+type MerchantSector = "bar" | "pub" | "ristorante" | "pizzeria" | "locale_notturno";
+
 type MerchantForm = {
   ragione_sociale: string;
   partita_iva: string;
@@ -32,21 +34,16 @@ type MerchantForm = {
   ateco: string;
   pec: string;
   iban: string;
-  sector: string;
+  sector: MerchantSector | "";
 };
 
-const SECTOR_OPTIONS = [
-  "Bar",
-  "Ristorante",
-  "Pizzeria",
-  "Pub",
-  "Centro estetico",
-  "Palestra",
-  "Negozio abbigliamento",
-  "Parrucchiere",
-  "Hotel/B&B",
-  "Locale notturno",
-] as const;
+const SECTOR_OPTIONS: ReadonlyArray<{ value: MerchantSector; label: string }> = [
+  { value: "bar", label: "Bar" },
+  { value: "ristorante", label: "Ristorante" },
+  { value: "pizzeria", label: "Pizzeria" },
+  { value: "pub", label: "Pub" },
+  { value: "locale_notturno", label: "Locale notturno" },
+];
 
 const INITIAL_USER_FORM: UserForm = {
   full_name: "",
@@ -110,7 +107,7 @@ export default function OnboardingPage() {
 
       const { data: byIdProfile } = await supabase
         .from("profiles")
-                .select("user_id,role,onboarding_completed")
+        .select("user_id,role,onboarding_completed")
         .eq("user_id", userId)
         .maybeSingle<ProfileRow>();
 
@@ -153,7 +150,7 @@ export default function OnboardingPage() {
       merchantForm.ateco.trim().length > 0 &&
       merchantForm.pec.trim().length > 0 &&
       merchantForm.iban.trim().length > 0 &&
-      merchantForm.sector.trim().length > 0
+      String(merchantForm.sector).trim().length > 0
     );
   }, [merchantForm]);
 
@@ -204,7 +201,7 @@ export default function OnboardingPage() {
             ateco: merchantForm.ateco.trim(),
             pec: merchantForm.pec.trim(),
             iban: merchantForm.iban.trim(),
-            sector: merchantForm.sector,
+            sector: merchantForm.sector, // ora è sempre enum valido
           };
 
     const userIdUpdate = await supabase
@@ -253,7 +250,9 @@ export default function OnboardingPage() {
           <section className="mt-6 space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <button
-                className={`rounded border p-4 text-left ${role === "user" ? "border-black bg-gray-50" : "border-gray-300"}`}
+                className={`rounded border p-4 text-left ${
+                  role === "user" ? "border-black bg-gray-50" : "border-gray-300"
+                }`}
                 onClick={() => setRole("user")}
                 type="button"
               >
@@ -262,7 +261,9 @@ export default function OnboardingPage() {
               </button>
 
               <button
-                className={`rounded border p-4 text-left ${role === "merchant" ? "border-black bg-gray-50" : "border-gray-300"}`}
+                className={`rounded border p-4 text-left ${
+                  role === "merchant" ? "border-black bg-gray-50" : "border-gray-300"
+                }`}
                 onClick={() => setRole("merchant")}
                 type="button"
               >
@@ -314,9 +315,7 @@ export default function OnboardingPage() {
                 </label>
                 <input
                   className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  onChange={(event) =>
-                    setUserForm((current) => ({ ...current, codice_fiscale: event.target.value }))
-                  }
+                  onChange={(event) => setUserForm((current) => ({ ...current, codice_fiscale: event.target.value }))}
                   placeholder="Codice fiscale"
                   required
                   type="text"
@@ -412,14 +411,19 @@ export default function OnboardingPage() {
                 />
                 <select
                   className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  onChange={(event) => setMerchantForm((current) => ({ ...current, sector: event.target.value }))}
+                  onChange={(event) =>
+                    setMerchantForm((current) => ({
+                      ...current,
+                      sector: event.target.value as MerchantSector | "",
+                    }))
+                  }
                   required
                   value={merchantForm.sector}
                 >
                   <option value="">Seleziona settore</option>
                   {SECTOR_OPTIONS.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
+                    <option key={option.value} value={option.value}>
+                      {option.label}
                     </option>
                   ))}
                 </select>
