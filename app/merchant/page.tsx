@@ -96,9 +96,14 @@ export default function MerchantPage() {
         <Link href="/merchant/sell" className="flex flex-col rounded-lg border border-gray-200 bg-white px-4 py-4 hover:bg-gray-50">
           <span className="text-lg">🛒</span>
           <p className="text-sm font-medium mt-2">Registra vendita</p>
-          <p className="text-xs text-gray-500 mt-0.5">Assegna cashback al cliente</p>
+          <p className="text-xs text-gray-500 mt-0.5">Cashback al cliente (POS €)</p>
         </Link>
-        <Link href="/merchant/clearing" className="flex flex-col rounded-lg border border-gray-200 bg-white px-4 py-4 hover:bg-gray-50">
+        <Link href="/merchant/request-payment" className="flex flex-col rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-4 hover:bg-indigo-100">
+          <span className="text-lg">🪙</span>
+          <p className="text-sm font-medium mt-2 text-indigo-800">Incassa in Token</p>
+          <p className="text-xs text-indigo-500 mt-0.5">Genera QR · cliente paga in token</p>
+        </Link>
+        <Link href="/merchant/clearing" className="flex flex-col rounded-lg border border-gray-200 bg-white px-4 py-4 hover:bg-gray-50 col-span-2">
           <span className="text-lg">💶</span>
           <p className="text-sm font-medium mt-2">Richiedi prelievo</p>
           <p className="text-xs text-gray-500 mt-0.5">Trasferisci € sul tuo IBAN</p>

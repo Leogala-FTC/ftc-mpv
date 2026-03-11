@@ -11,11 +11,13 @@ const NAV_LINKS: Record<NonNullable<Role>, { href: string; label: string }[]> = 
   user: [
     { href: "/user", label: "Home" },
     { href: "/user/wallet", label: "Wallet" },
+    { href: "/user/topup", label: "Ricarica" },
   ],
   merchant: [
     { href: "/merchant", label: "Home" },
-    { href: "/merchant/sell", label: "Vendi" },
-    { href: "/merchant/clearing", label: "Clearing" },
+    { href: "/merchant/sell", label: "Vendi €" },
+    { href: "/merchant/request-payment", label: "Paga Token" },
+    { href: "/merchant/clearing", label: "Prelievo" },
   ],
   admin: [
     { href: "/admin", label: "Dashboard" },
