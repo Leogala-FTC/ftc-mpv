@@ -97,8 +97,8 @@ export async function searchUserByEmail(email: string) {
 export async function adminCreditWallet(
   targetUserId: string,
   tokenAmount: number,
-  reason: string,
-  adminUserId: string
+  _reason: string,
+  _adminUserId: string
 ) {
   await assertAdmin();
   if (tokenAmount <= 0) return { success: false, error: "Importo non valido" };
@@ -130,7 +130,7 @@ export async function adminCreditWallet(
     profile_user_id: targetUserId,
     direction: "in",
     amount_tokens: tokenAmount,
-    reason: reason || `Carica manuale admin (≈€${eurEquiv.toFixed(2)})`,
+    reason: _reason || `Carica manuale admin (≈€${eurEquiv.toFixed(2)})`,
   });
 
   return { success: true, tokenAmount, eurEquiv };
@@ -140,7 +140,7 @@ export async function adminCreditWallet(
 export async function adminCreditEur(
   targetUserId: string,
   eurAmount: number,
-  reason: string
+  _reason: string
 ) {
   await assertAdmin();
   if (eurAmount <= 0) return { success: false, error: "Importo non valido" };
