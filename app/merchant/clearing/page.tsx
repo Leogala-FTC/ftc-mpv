@@ -61,12 +61,17 @@ export default function MerchantClearingPage() {
         {loadingBalance ? (
           <div className="h-8 w-40 bg-indigo-100 animate-pulse rounded" />
         ) : (
-          <div className="flex items-end gap-2">
-            <span className="text-3xl font-bold text-indigo-700">
-              €{maxEur.toFixed(2)}
-            </span>
-            <span className="text-indigo-400 mb-1 text-sm">da vendite FTC</span>
-          </div>
+          <>
+            <div className="flex items-end gap-2">
+              <span className="text-3xl font-bold text-indigo-700">
+                €{maxEur.toFixed(2)}
+              </span>
+              <span className="text-indigo-400 mb-1 text-sm">da vendite FTC</span>
+            </div>
+            <p className="text-xs text-indigo-400 mt-1">
+              ≈ {Math.floor(maxEur * 11.7).toLocaleString("it-IT")} token
+            </p>
+          </>
         )}
       </div>
 

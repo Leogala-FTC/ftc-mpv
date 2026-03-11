@@ -113,14 +113,6 @@ export default function PayPage() {
           <span className="text-gray-600">Importo</span>
           <span className="font-medium">€{Number(sessionData.amount_eur).toFixed(2)}</span>
         </div>
-        <div className="flex justify-between">
-          <span className="text-gray-600">→ Al merchant</span>
-          <span className="font-medium">{sessionData.token_amount.toLocaleString()} token</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-gray-600">→ Fee FTC (3%)</span>
-          <span className="text-gray-500">{sessionData.fee_tokens.toLocaleString()} token</span>
-        </div>
         <div className="border-t pt-2 flex justify-between">
           <span className="text-gray-700 font-medium">Il tuo saldo</span>
           <span className={`font-semibold ${hasEnough ? "text-green-600" : "text-red-500"}`}>

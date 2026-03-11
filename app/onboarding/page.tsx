@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabase-client";
-import { AddressAutocomplete } from "@/app/components/address-autocomplete";
+import AddressAutocomplete from "@/app/components/address-autocomplete";
 
 type Role = "user" | "merchant";
 type AnyRole = Role | "admin";
@@ -323,13 +323,12 @@ export default function OnboardingPage() {
                   value={userForm.codice_fiscale}
                 />
                 <AddressAutocomplete
-                  value={userForm.address}
-                  placeholder="Indirizzo (via e numero civico)"
-                  required
-                  onChange={({ address, city }) =>
+                  defaultValue={userForm.address}
+                  placeholder="Cerca il tuo indirizzo..."
+                  onSelect={({ street, city }) =>
                     setUserForm((current) => ({
                       ...current,
-                      address,
+                      address: street,
                       city: city || current.city,
                     }))
                   }
@@ -337,7 +336,7 @@ export default function OnboardingPage() {
                 <input
                   className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
                   onChange={(event) => setUserForm((current) => ({ ...current, city: event.target.value }))}
-                  placeholder="Città"
+                  placeholder="Città (si compila in automatico)"
                   required
                   type="text"
                   value={userForm.city}
@@ -375,13 +374,12 @@ export default function OnboardingPage() {
                   value={merchantForm.codice_fiscale}
                 />
                 <AddressAutocomplete
-                  value={merchantForm.address}
-                  placeholder="Indirizzo sede (via e numero civico)"
-                  required
-                  onChange={({ address, city }) =>
+                  defaultValue={merchantForm.address}
+                  placeholder="Cerca indirizzo sede..."
+                  onSelect={({ street, city }) =>
                     setMerchantForm((current) => ({
                       ...current,
-                      address,
+                      address: street,
                       city: city || current.city,
                     }))
                   }
@@ -389,7 +387,7 @@ export default function OnboardingPage() {
                 <input
                   className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
                   onChange={(event) => setMerchantForm((current) => ({ ...current, city: event.target.value }))}
-                  placeholder="Città"
+                  placeholder="Città (si compila in automatico)"
                   required
                   type="text"
                   value={merchantForm.city}

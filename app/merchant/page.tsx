@@ -88,7 +88,9 @@ export default function MerchantPage() {
         <p className="text-4xl font-bold">
           €{eurBalance.toFixed(2)}
         </p>
-        <p className="text-sm opacity-50 mt-1">Accumulato dalle vendite FTC</p>
+        <p className="text-sm opacity-50 mt-1">
+          ≈ {Math.floor(eurBalance * 11.7).toLocaleString("it-IT")} token
+        </p>
       </div>
 
       {/* Azioni */}

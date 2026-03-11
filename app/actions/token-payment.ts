@@ -18,13 +18,9 @@ export async function createTokenPaymentSession(amountEur: number, note?: string
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return { success: false, error: "Non autenticato" };
 
-  // Calcolo token
-  // Merchant riceve: amountEur in token = floor(amountEur * 11.7)
-  // FTC fee: 3% dei token totali a carico dell'utente
-  // Utente paga: merchantTokens + feeTokens
-  const tokenAmount = Math.floor(amountEur * TOKENS_PER_EURO);       // token al merchant
-  const feeTokens = Math.ceil(tokenAmount * TOKEN_FEE_RATE);          // 3% fee FTC
-  const totalTokens = tokenAmount + feeTokens;                         // totale a carico utente
+  const tokenAmount = Math.floor(amountEur * TOKENS_PER_EURO);
+  const feeTokens = Math.ceil(tokenAmount * TOKEN_FEE_RATE);
+  const totalTokens = tokenAmount + feeTokens;
 
   const db = getDb();
   const { data: session, error } = await db
@@ -42,11 +38,10 @@ export async function createTokenPaymentSession(amountEur: number, note?: string
     .single();
 
   if (error) return { success: false, error: error.message };
-
   return { success: true, sessionId: session!.id, tokenAmount, feeTokens, totalTokens };
 }
 
-/** Recupera i dettagli di una sessione (per la pagina di pagamento utente) */
+/** Recupera i dettagli di una sessione */
 export async function getTokenPaymentSession(sessionId: string) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -60,22 +55,21 @@ export async function getTokenPaymentSession(sessionId: string) {
     .single();
 
   if (error || !session) return { success: false, error: "Sessione non trovata" };
-  if (session.status !== "pending") return { success: false, error: "Sessione già completata o scaduta" };
 
-  // Controlla scadenza
+  if (session.status === "completed") return { success: false, error: "Sessione già pagata" };
+  if (session.status === "expired") return { success: false, error: "Sessione scaduta" };
+
   if (new Date(session.expires_at) < new Date()) {
     await db.from("token_payment_sessions").update({ status: "expired" }).eq("id", sessionId);
     return { success: false, error: "Sessione scaduta" };
   }
 
-  // Recupera nome merchant
   const { data: merchantProfile } = await db
     .from("profiles")
     .select("business_name, full_name")
     .eq("user_id", session.merchant_user_id)
     .single();
 
-  // Saldo token utente
   const { data: wallet } = await db
     .from("wallets")
     .select("token_balance")
@@ -92,7 +86,24 @@ export async function getTokenPaymentSession(sessionId: string) {
   };
 }
 
-/** Utente conferma il pagamento in token */
+/** Controlla status sessione (polling merchant) */
+export async function checkSessionStatus(sessionId: string) {
+  const db = getDb();
+  const { data: session } = await db
+    .from("token_payment_sessions")
+    .select("status, buyer_user_id, total_tokens, amount_eur")
+    .eq("id", sessionId)
+    .single();
+
+  if (!session) return { status: "not_found" };
+  return {
+    status: session.status,
+    totalTokens: session.total_tokens,
+    amountEur: session.amount_eur,
+  };
+}
+
+/** Utente conferma il pagamento in token — ordine corretto: wallet prima, sessione dopo */
 export async function confirmTokenPayment(sessionId: string) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -100,7 +111,7 @@ export async function confirmTokenPayment(sessionId: string) {
 
   const db = getDb();
 
-  // Lock: aggiorna status atomicamente
+  // 1. Recupera sessione — deve essere pending e non scaduta
   const { data: session, error: fetchError } = await db
     .from("token_payment_sessions")
     .select("*")
@@ -108,31 +119,35 @@ export async function confirmTokenPayment(sessionId: string) {
     .eq("status", "pending")
     .single();
 
-  if (fetchError || !session) return { success: false, error: "Sessione non disponibile" };
-  if (new Date(session.expires_at) < new Date()) return { success: false, error: "Sessione scaduta" };
+  if (fetchError || !session) return { success: false, error: "Sessione non disponibile o già elaborata" };
+  if (new Date(session.expires_at) < new Date()) {
+    await db.from("token_payment_sessions").update({ status: "expired" }).eq("id", sessionId);
+    return { success: false, error: "Sessione scaduta" };
+  }
 
-  // Controlla saldo utente
-  const { data: buyerWallet } = await db
+  // 2. Controlla saldo buyer
+  const { data: buyerWallet, error: walletError } = await db
     .from("wallets")
     .select("id, token_balance")
     .eq("profile_user_id", user.id)
     .single();
 
-  if (!buyerWallet || buyerWallet.token_balance < session.total_tokens) {
-    return { success: false, error: `Saldo insufficiente. Ti servono ${session.total_tokens} token, hai ${buyerWallet?.token_balance ?? 0}.` };
+  if (walletError || !buyerWallet) {
+    return { success: false, error: "Wallet non trovato. Ricarica prima i tuoi token." };
+  }
+  if (buyerWallet.token_balance < session.total_tokens) {
+    return { success: false, error: `Saldo insufficiente. Ti servono ${session.total_tokens} token, hai ${buyerWallet.token_balance}.` };
   }
 
-  // Marca sessione come completed
-  await db.from("token_payment_sessions")
-    .update({ status: "completed", buyer_user_id: user.id })
-    .eq("id", sessionId);
-
-  // Scala token dal buyer
-  await db.from("wallets")
+  // 3. Scala token dal buyer
+  const { error: buyerUpdateError } = await db
+    .from("wallets")
     .update({ token_balance: buyerWallet.token_balance - session.total_tokens })
     .eq("id", buyerWallet.id);
 
-  // Accredita token al merchant
+  if (buyerUpdateError) return { success: false, error: "Errore scalando i token: " + buyerUpdateError.message };
+
+  // 4. Accredita token al merchant
   const { data: merchantWallet } = await db
     .from("wallets")
     .select("id, token_balance")
@@ -140,24 +155,35 @@ export async function confirmTokenPayment(sessionId: string) {
     .single();
 
   if (merchantWallet) {
-    await db.from("wallets")
+    const { error: merchantUpdateError } = await db
+      .from("wallets")
       .update({ token_balance: merchantWallet.token_balance + session.token_amount })
       .eq("id", merchantWallet.id);
+
+    if (merchantUpdateError) {
+      // Rollback buyer wallet
+      await db.from("wallets").update({ token_balance: buyerWallet.token_balance }).eq("id", buyerWallet.id);
+      return { success: false, error: "Errore accreditando i token al merchant" };
+    }
   } else {
-    await db.from("wallets").insert({
+    const { error: insertError } = await db.from("wallets").insert({
       profile_user_id: session.merchant_user_id,
       token_balance: session.token_amount,
       eur_balance: 0,
     });
+    if (insertError) {
+      await db.from("wallets").update({ token_balance: buyerWallet.token_balance }).eq("id", buyerWallet.id);
+      return { success: false, error: "Errore creando wallet merchant" };
+    }
   }
 
-  // Registra transazioni
+  // 5. Registra transazioni
   await db.from("token_transactions").insert([
     {
       profile_user_id: user.id,
       direction: "out",
       amount_tokens: session.total_tokens,
-      reason: `Pagamento token €${Number(session.amount_eur).toFixed(2)} + 3% fee`,
+      reason: `Pagamento token a ${session.merchant_user_id} — €${Number(session.amount_eur).toFixed(2)}`,
     },
     {
       profile_user_id: session.merchant_user_id,
@@ -166,6 +192,12 @@ export async function confirmTokenPayment(sessionId: string) {
       reason: `Incasso token da cliente — €${Number(session.amount_eur).toFixed(2)}`,
     },
   ]);
+
+  // 6. Marca sessione completed — SOLO dopo che tutto è andato a buon fine
+  await db
+    .from("token_payment_sessions")
+    .update({ status: "completed", buyer_user_id: user.id })
+    .eq("id", sessionId);
 
   revalidatePath("/user/wallet");
   revalidatePath("/merchant");
