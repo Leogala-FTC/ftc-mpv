@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabase-client";
+import { AddressAutocomplete } from "@/app/components/address-autocomplete";
 
 type Role = "user" | "merchant";
 type AnyRole = Role | "admin";
@@ -321,13 +322,17 @@ export default function OnboardingPage() {
                   type="text"
                   value={userForm.codice_fiscale}
                 />
-                <input
-                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  onChange={(event) => setUserForm((current) => ({ ...current, address: event.target.value }))}
-                  placeholder="Indirizzo"
-                  required
-                  type="text"
+                <AddressAutocomplete
                   value={userForm.address}
+                  placeholder="Indirizzo (via e numero civico)"
+                  required
+                  onChange={({ address, city }) =>
+                    setUserForm((current) => ({
+                      ...current,
+                      address,
+                      city: city || current.city,
+                    }))
+                  }
                 />
                 <input
                   className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
@@ -369,13 +374,17 @@ export default function OnboardingPage() {
                   type="text"
                   value={merchantForm.codice_fiscale}
                 />
-                <input
-                  className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-                  onChange={(event) => setMerchantForm((current) => ({ ...current, address: event.target.value }))}
-                  placeholder="Indirizzo"
-                  required
-                  type="text"
+                <AddressAutocomplete
                   value={merchantForm.address}
+                  placeholder="Indirizzo sede (via e numero civico)"
+                  required
+                  onChange={({ address, city }) =>
+                    setMerchantForm((current) => ({
+                      ...current,
+                      address,
+                      city: city || current.city,
+                    }))
+                  }
                 />
                 <input
                   className="w-full rounded border border-gray-300 px-3 py-2 text-sm"

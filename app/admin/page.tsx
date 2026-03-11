@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabase-client";
+import { getAdminUsers, getAdminPayments, getAdminClearings, updateClearingStatus as updateClearingStatusAction } from "@/app/actions/admin";
 
 type Tab = "users" | "payments" | "clearing";
 
@@ -58,24 +59,26 @@ export default function AdminPage() {
 
       if (profile?.role !== "admin") { router.push("/"); return; }
 
-      const [{ data: u }, { data: p }, { data: c }] = await Promise.all([
-        supabase.from("profiles").select("user_id,role,full_name,business_name,city,onboarding_completed,created_at").order("created_at", { ascending: false }),
-        supabase.from("payments").select("*").order("created_at", { ascending: false }).limit(50),
-        supabase.from("clearing_requests").select("*").order("created_at", { ascending: false }).limit(50),
-      ]);
-
-      setUsers(u ?? []);
-      setPayments(p ?? []);
-      setClearings(c ?? []);
+      try {
+        const [u, p, c] = await Promise.all([
+          getAdminUsers(),
+          getAdminPayments(),
+          getAdminClearings(),
+        ]);
+        setUsers(u);
+        setPayments(p);
+        setClearings(c);
+      } catch (e) {
+        console.error(e);
+      }
       setLoading(false);
     };
     load();
   }, [router]);
 
   const updateClearingStatus = async (id: string, status: string) => {
-    const supabase = getSupabaseClient();
-    const { error } = await supabase.from("clearing_requests").update({ status }).eq("id", id);
-    if (error) { setActionMsg("Errore: " + error.message); return; }
+    const res = await updateClearingStatusAction(id, status);
+    if (!res.success) { setActionMsg("Errore: " + res.error); return; }
     setClearings((prev) => prev.map((c) => c.id === id ? { ...c, status } : c));
     setActionMsg(`Richiesta aggiornata → ${status}`);
     setTimeout(() => setActionMsg(null), 3000);
