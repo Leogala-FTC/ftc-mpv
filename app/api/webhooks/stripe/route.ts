@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient as createServiceClient } from "@supabase/supabase-js";
-import { getStripe, STRIPE_WEBHOOK_SECRET, TOKENS_PER_EURO, TOKEN_FEE_RATE } from "@/lib/stripe";
+import { getStripe, STRIPE_WEBHOOK_SECRET, TOKENS_PER_EURO } from "@/lib/stripe";
 import Stripe from "stripe";
 
 function getDb() {

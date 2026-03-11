@@ -97,7 +97,7 @@ export default function AdminPage() {
 
     if (creditType === "tokens") {
       const tokens = parseInt(walletAmount);
-      const res = await adminCreditWallet(walletTarget.userId, tokens, walletReason, "");
+      const res = await adminCreditWallet(walletTarget.userId, tokens, walletReason);
       if (res.success) {
         showMsg("ok", `✓ Caricati ${tokens.toLocaleString()} token su ${walletTarget.name} (≈€${res.eurEquiv?.toFixed(2)})`);
         const updated = await getAdminWallets();
