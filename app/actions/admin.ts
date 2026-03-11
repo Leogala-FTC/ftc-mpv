@@ -3,6 +3,8 @@
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 
+const TOKENS_PER_EURO = 11.7;
+
 // Service role client — bypasses RLS, server-only
 function getServiceClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -68,3 +70,69 @@ export async function updateClearingStatus(id: string, status: string) {
   if (error) return { success: false, error: error.message };
   return { success: true };
 }
+
+export async function searchUserByEmail(email: string) {
+  await assertAdmin();
+  const db = getServiceClient();
+  // Search auth users by email
+  const { data, error } = await db.auth.admin.listUsers();
+  if (error) return { success: false as const, error: error.message };
+  const user = data.users.find((u) => u.email?.toLowerCase() === email.toLowerCase().trim());
+  if (!user) return { success: false as const, error: "Utente non trovato" };
+  // Get profile
+  const { data: profile } = await db
+    .from("profiles")
+    .select("full_name,business_name,role")
+    .eq("user_id", user.id)
+    .single();
+  return {
+    success: true as const,
+    userId: user.id,
+    email: user.email ?? "",
+    name: profile?.full_name ?? profile?.business_name ?? "",
+    role: profile?.role ?? "",
+  };
+}
+
+export async function adminCreditWallet(
+  targetUserId: string,
+  tokenAmount: number,
+  reason: string,
+  adminUserId: string
+) {
+  await assertAdmin();
+  if (tokenAmount <= 0) return { success: false, error: "Importo non valido" };
+
+  const db = getServiceClient();
+  const eurEquiv = tokenAmount / TOKENS_PER_EURO;
+
+  // Get or create wallet
+  const { data: existing } = await db
+    .from("wallets")
+    .select("id,token_balance")
+    .eq("profile_user_id", targetUserId)
+    .single();
+
+  if (existing) {
+    await db
+      .from("wallets")
+      .update({ token_balance: existing.token_balance + tokenAmount })
+      .eq("id", existing.id);
+  } else {
+    await db.from("wallets").insert({
+      profile_user_id: targetUserId,
+      token_balance: tokenAmount,
+    });
+  }
+
+  // Record transaction
+  await db.from("token_transactions").insert({
+    profile_user_id: targetUserId,
+    direction: "in",
+    amount_tokens: tokenAmount,
+    reason: reason || `Carica manuale admin (≈€${eurEquiv.toFixed(2)})`,
+  });
+
+  return { success: true, tokenAmount, eurEquiv };
+}
+
