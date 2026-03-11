@@ -136,3 +136,46 @@ export async function adminCreditWallet(
   return { success: true, tokenAmount, eurEquiv };
 }
 
+
+export async function adminCreditEur(
+  targetUserId: string,
+  eurAmount: number,
+  reason: string
+) {
+  await assertAdmin();
+  if (eurAmount <= 0) return { success: false, error: "Importo non valido" };
+
+  const db = getServiceClient();
+
+  const { data: existing } = await db
+    .from("wallets")
+    .select("id,eur_balance")
+    .eq("profile_user_id", targetUserId)
+    .single();
+
+  if (existing) {
+    const currentEur = Number(existing.eur_balance) || 0;
+    await db
+      .from("wallets")
+      .update({ eur_balance: currentEur + eurAmount })
+      .eq("id", existing.id);
+  } else {
+    await db.from("wallets").insert({
+      profile_user_id: targetUserId,
+      token_balance: 0,
+      eur_balance: eurAmount,
+    });
+  }
+
+  return { success: true, eurAmount };
+}
+
+export async function getAdminWallets() {
+  await assertAdmin();
+  const db = getServiceClient();
+  const { data, error } = await db
+    .from("wallets")
+    .select("profile_user_id,token_balance,eur_balance");
+  if (error) return [];
+  return data ?? [];
+}

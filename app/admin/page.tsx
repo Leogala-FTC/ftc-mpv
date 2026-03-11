@@ -6,7 +6,7 @@ import { getSupabaseClient } from "@/lib/supabase-client";
 import {
   getAdminUsers, getAdminPayments, getAdminClearings,
   updateClearingStatus as updateClearingStatusAction,
-  adminCreditWallet,
+  adminCreditWallet, adminCreditEur, getAdminWallets,
 } from "@/app/actions/admin";
 
 type Tab = "users" | "payments" | "clearing" | "wallet";
@@ -25,8 +25,12 @@ type ClearingRow = {
   id: string; token_amount: number; eur_amount: number; status: string;
   iban: string | null; created_at: string; merchant_user_id: string;
 };
+type WalletRow = {
+  profile_user_id: string; token_balance: number; eur_balance: number;
+};
 
 const TOKENS_PER_EURO = 11.7;
+type CreditType = "tokens" | "eur";
 
 export default function AdminPage() {
   const router = useRouter();
@@ -34,13 +38,14 @@ export default function AdminPage() {
   const [users, setUsers] = useState<UserRow[]>([]);
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [clearings, setClearings] = useState<ClearingRow[]>([]);
+  const [wallets, setWallets] = useState<WalletRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionMsg, setActionMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
-  const [adminUserId, setAdminUserId] = useState("");
 
   // Wallet carica manuale
-  const [walletTarget, setWalletTarget] = useState<{ userId: string; name: string } | null>(null);
-  const [walletTokens, setWalletTokens] = useState("");
+  const [walletTarget, setWalletTarget] = useState<{ userId: string; name: string; role: string } | null>(null);
+  const [creditType, setCreditType] = useState<CreditType>("tokens");
+  const [walletAmount, setWalletAmount] = useState("");
   const [walletReason, setWalletReason] = useState("");
   const [walletLoading, setWalletLoading] = useState(false);
   const [walletFilter, setWalletFilter] = useState("");
@@ -50,15 +55,14 @@ export default function AdminPage() {
       const supabase = getSupabaseClient();
       const { data: authData } = await supabase.auth.getUser();
       if (!authData.user) { router.push("/"); return; }
-      setAdminUserId(authData.user.id);
 
       const { data: profile } = await supabase
         .from("profiles").select("role").eq("user_id", authData.user.id).single();
       if (profile?.role !== "admin") { router.push("/"); return; }
 
       try {
-        const [u, p, c] = await Promise.all([getAdminUsers(), getAdminPayments(), getAdminClearings()]);
-        setUsers(u); setPayments(p); setClearings(c);
+        const [u, p, c, w] = await Promise.all([getAdminUsers(), getAdminPayments(), getAdminClearings(), getAdminWallets()]);
+        setUsers(u); setPayments(p); setClearings(c); setWallets(w);
       } catch (e) { console.error(e); }
       setLoading(false);
     };
@@ -67,7 +71,7 @@ export default function AdminPage() {
 
   const showMsg = (type: "ok" | "err", text: string) => {
     setActionMsg({ type, text });
-    setTimeout(() => setActionMsg(null), 4000);
+    setTimeout(() => setActionMsg(null), 5000);
   };
 
   const updateClearingStatus = async (id: string, status: string) => {
@@ -77,23 +81,37 @@ export default function AdminPage() {
     showMsg("ok", `Richiesta aggiornata → ${status}`);
   };
 
+  const getWallet = (userId: string) => wallets.find(w => w.profile_user_id === userId);
+
   async function handleCreditWallet() {
-    if (!walletTarget || !walletTokens || parseInt(walletTokens) <= 0) return;
+    if (!walletTarget || !walletAmount || parseFloat(walletAmount) <= 0) return;
     setWalletLoading(true);
-    const res = await adminCreditWallet(
-      walletTarget.userId,
-      parseInt(walletTokens),
-      walletReason || "",
-      adminUserId
-    );
-    if (res.success) {
-      showMsg("ok", `✓ Caricati ${res.tokenAmount} token su ${walletTarget.name} (≈€${res.eurEquiv?.toFixed(2)})`);
-      setWalletTarget(null);
-      setWalletTokens("");
-      setWalletReason("");
+
+    if (creditType === "tokens") {
+      const tokens = parseInt(walletAmount);
+      const res = await adminCreditWallet(walletTarget.userId, tokens, walletReason, "");
+      if (res.success) {
+        showMsg("ok", `✓ Caricati ${tokens.toLocaleString()} token su ${walletTarget.name} (≈€${res.eurEquiv?.toFixed(2)})`);
+        const updated = await getAdminWallets();
+        setWallets(updated);
+      } else {
+        showMsg("err", "Errore: " + res.error);
+      }
     } else {
-      showMsg("err", "Errore: " + res.error);
+      const eur = parseFloat(walletAmount);
+      const res = await adminCreditEur(walletTarget.userId, eur, walletReason);
+      if (res.success) {
+        showMsg("ok", `✓ Caricati €${eur.toFixed(2)} su ${walletTarget.name}`);
+        const updated = await getAdminWallets();
+        setWallets(updated);
+      } else {
+        showMsg("err", "Errore: " + res.error);
+      }
     }
+
+    setWalletTarget(null);
+    setWalletAmount("");
+    setWalletReason("");
     setWalletLoading(false);
   }
 
@@ -127,7 +145,7 @@ export default function AdminPage() {
     <main className="mx-auto max-w-4xl px-4 py-8">
       <h1 className="text-2xl font-semibold mb-1">Admin Dashboard</h1>
       <p className="text-sm text-gray-500 mb-6">
-        {users.length} utenti · {payments.length} pagamenti · {clearings.filter(c => c.status === "pending").length} clearing in attesa
+        {users.length} utenti · {payments.length} pagamenti · {clearings.filter(c => c.status === "pending").length} prelievi in attesa
       </p>
 
       {actionMsg && (
@@ -148,7 +166,7 @@ export default function AdminPage() {
               tab === t ? "border-indigo-600 text-indigo-600" : "border-transparent text-gray-500 hover:text-gray-700"
             }`}
           >
-            {t === "users" ? "Utenti" : t === "payments" ? "Pagamenti" : t === "clearing" ? "Clearing" : "💳 Carica Wallet"}
+            {t === "users" ? "Utenti" : t === "payments" ? "Pagamenti" : t === "clearing" ? "Prelievi" : "💳 Carica Wallet"}
           </button>
         ))}
       </div>
@@ -161,30 +179,39 @@ export default function AdminPage() {
               <tr className="border-b border-gray-100 text-left text-xs text-gray-500">
                 <th className="pb-2 pr-4 font-medium">Nome / Ragione sociale</th>
                 <th className="pb-2 pr-4 font-medium">Ruolo</th>
-                <th className="pb-2 pr-4 font-medium">Città</th>
+                <th className="pb-2 pr-4 font-medium">Saldo</th>
                 <th className="pb-2 pr-4 font-medium">Onboarding</th>
-                <th className="pb-2 font-medium">Registrato</th>
+                <th className="pb-2 font-medium">Data</th>
               </tr>
             </thead>
             <tbody>
-              {users.map((u) => (
-                <tr key={u.user_id} className="border-b border-gray-50 hover:bg-gray-50">
-                  <td className="py-2 pr-4 font-medium">{u.full_name ?? u.business_name ?? <span className="text-gray-400">—</span>}</td>
-                  <td className="py-2 pr-4">
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                      u.role === "admin" ? "bg-purple-50 text-purple-700" :
-                      u.role === "merchant" ? "bg-blue-50 text-blue-700" : "bg-gray-100 text-gray-600"
-                    }`}>{u.role ?? "—"}</span>
-                  </td>
-                  <td className="py-2 pr-4 text-gray-600">{u.city ?? "—"}</td>
-                  <td className="py-2 pr-4">
-                    {u.onboarding_completed
-                      ? <span className="text-green-600 text-xs">✓ Completato</span>
-                      : <span className="text-yellow-600 text-xs">⏳ Pendente</span>}
-                  </td>
-                  <td className="py-2 text-gray-500 text-xs">{fmt(u.created_at)}</td>
-                </tr>
-              ))}
+              {users.map((u) => {
+                const w = getWallet(u.user_id);
+                return (
+                  <tr key={u.user_id} className="border-b border-gray-50 hover:bg-gray-50">
+                    <td className="py-2 pr-4 font-medium">{u.full_name ?? u.business_name ?? <span className="text-gray-400">—</span>}</td>
+                    <td className="py-2 pr-4">
+                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                        u.role === "admin" ? "bg-purple-50 text-purple-700" :
+                        u.role === "merchant" ? "bg-blue-50 text-blue-700" : "bg-gray-100 text-gray-600"
+                      }`}>{u.role ?? "—"}</span>
+                    </td>
+                    <td className="py-2 pr-4 text-xs text-gray-600">
+                      {u.role === "merchant" ? (
+                        <span>€{Number(w?.eur_balance || 0).toFixed(2)}</span>
+                      ) : (
+                        <span>{Number(w?.token_balance || 0).toLocaleString()} token</span>
+                      )}
+                    </td>
+                    <td className="py-2 pr-4">
+                      {u.onboarding_completed
+                        ? <span className="text-green-600 text-xs">✓ Sì</span>
+                        : <span className="text-yellow-600 text-xs">⏳ No</span>}
+                    </td>
+                    <td className="py-2 text-gray-500 text-xs">{fmt(u.created_at)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -197,21 +224,22 @@ export default function AdminPage() {
             <thead>
               <tr className="border-b border-gray-100 text-left text-xs text-gray-500">
                 <th className="pb-2 pr-4 font-medium">Data</th>
-                <th className="pb-2 pr-4 font-medium">Importo</th>
-                <th className="pb-2 pr-4 font-medium">Merchant (90%)</th>
-                <th className="pb-2 pr-4 font-medium">FTC (5%)</th>
-                <th className="pb-2 pr-4 font-medium">Cashback</th>
+                <th className="pb-2 pr-4 font-medium">Totale</th>
+                <th className="pb-2 pr-4 font-medium">→ Merchant</th>
+                <th className="pb-2 pr-4 font-medium">→ FTC (5%)</th>
+                <th className="pb-2 pr-4 font-medium">→ Cashback</th>
                 <th className="pb-2 font-medium">Stato</th>
               </tr>
             </thead>
             <tbody>
               {payments.map((p) => {
-                const merchantEur = p.amount_eur - p.fee_eur - (p.amount_eur * (p.cashback_percent / 100));
+                const cashbackEur = p.amount_eur * (p.cashback_percent / 100);
+                const merchantEur = p.amount_eur - p.fee_eur - cashbackEur;
                 return (
                   <tr key={p.id} className="border-b border-gray-50 hover:bg-gray-50">
                     <td className="py-2 pr-4 text-gray-500 text-xs">{fmt(p.created_at)}</td>
                     <td className="py-2 pr-4 font-semibold">€{Number(p.amount_eur).toFixed(2)}</td>
-                    <td className="py-2 pr-4 text-green-700">€{merchantEur.toFixed(2)}</td>
+                    <td className="py-2 pr-4 text-green-700 font-medium">€{merchantEur.toFixed(2)}</td>
                     <td className="py-2 pr-4 text-gray-600">€{Number(p.fee_eur).toFixed(2)}</td>
                     <td className="py-2 pr-4 text-indigo-600">{p.cashback_tokens} token ({p.cashback_percent}%)</td>
                     <td className="py-2">
@@ -228,14 +256,14 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* CLEARING */}
+      {/* CLEARING / PRELIEVI */}
       {tab === "clearing" && (
         <div className="space-y-3">
           {clearings.map((c) => (
             <div key={c.id} className="rounded-xl border border-gray-100 bg-white px-4 py-4">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-sm font-semibold">{c.token_amount.toLocaleString()} token → €{Number(c.eur_amount).toFixed(2)}</p>
+                  <p className="text-sm font-semibold">Prelievo €{Number(c.eur_amount).toFixed(2)}</p>
                   <p className="text-xs text-gray-400 mt-0.5">merchant: {shortId(c.merchant_user_id)}</p>
                   {c.iban && <p className="text-xs text-gray-500 mt-0.5 font-mono">{c.iban}</p>}
                   <p className="text-xs text-gray-400 mt-1">{fmt(c.created_at)}</p>
@@ -258,7 +286,7 @@ export default function AdminPage() {
               </div>
             </div>
           ))}
-          {clearings.length === 0 && <p className="text-sm text-gray-400 py-4 text-center">Nessuna richiesta clearing.</p>}
+          {clearings.length === 0 && <p className="text-sm text-gray-400 py-4 text-center">Nessuna richiesta.</p>}
         </div>
       )}
 
@@ -266,7 +294,7 @@ export default function AdminPage() {
       {tab === "wallet" && (
         <div className="max-w-lg">
           <p className="text-sm text-gray-600 mb-6">
-            Strumento MVP per caricare token manualmente su qualsiasi wallet (utente o merchant), in sostituzione del pagamento Stripe.
+            Strumento MVP per simulare i pagamenti Stripe. Carica <strong>token</strong> per utenti (cashback manuale) o <strong>euro</strong> per merchant (incasso simulato).
           </p>
 
           {/* Seleziona destinatario */}
@@ -276,22 +304,34 @@ export default function AdminPage() {
               type="text"
               value={walletFilter}
               onChange={(e) => setWalletFilter(e.target.value)}
-              placeholder="Filtra per nome, ruolo o città…"
+              placeholder="Filtra per nome, ruolo, città…"
               className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
             <div className="max-h-52 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
               {filteredUsers.map((u) => {
                 const name = u.full_name ?? u.business_name ?? "—";
                 const isSelected = walletTarget?.userId === u.user_id;
+                const w = getWallet(u.user_id);
                 return (
                   <button
                     key={u.user_id}
-                    onClick={() => setWalletTarget({ userId: u.user_id, name })}
+                    onClick={() => {
+                      setWalletTarget({ userId: u.user_id, name, role: u.role ?? "" });
+                      setCreditType(u.role === "merchant" ? "eur" : "tokens");
+                      setWalletAmount("");
+                    }}
                     className={`w-full flex items-center justify-between px-3 py-2.5 text-sm text-left hover:bg-gray-50 transition-colors ${
                       isSelected ? "bg-indigo-50 border-l-2 border-indigo-500" : ""
                     }`}
                   >
-                    <span className={`font-medium ${isSelected ? "text-indigo-700" : ""}`}>{name}</span>
+                    <div>
+                      <span className={`font-medium ${isSelected ? "text-indigo-700" : ""}`}>{name}</span>
+                      <span className="text-xs text-gray-400 ml-2">
+                        {u.role === "merchant"
+                          ? `€${Number(w?.eur_balance || 0).toFixed(2)}`
+                          : `${Number(w?.token_balance || 0).toLocaleString()} tk`}
+                      </span>
+                    </div>
                     <span className={`text-xs px-2 py-0.5 rounded-full ${
                       u.role === "merchant" ? "bg-blue-50 text-blue-600" :
                       u.role === "admin" ? "bg-purple-50 text-purple-600" : "bg-gray-100 text-gray-500"
@@ -303,43 +343,74 @@ export default function AdminPage() {
             </div>
           </div>
 
-          {/* Importo */}
+          {/* Form carica */}
           {walletTarget && (
             <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-5 space-y-4">
               <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-indigo-800">Destinatario: {walletTarget.name}</p>
+                <p className="text-sm font-semibold text-indigo-800">→ {walletTarget.name}</p>
                 <button onClick={() => setWalletTarget(null)} className="text-xs text-gray-400 hover:text-red-500">✕</button>
               </div>
 
+              {/* Toggle tipo credito */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Token da caricare</label>
+                <p className="text-xs font-medium text-gray-600 mb-2">Tipo di carica:</p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setCreditType("tokens"); setWalletAmount(""); }}
+                    className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      creditType === "tokens" ? "bg-indigo-600 text-white" : "bg-white border border-gray-300 text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    🪙 Token
+                  </button>
+                  <button
+                    onClick={() => { setCreditType("eur"); setWalletAmount(""); }}
+                    className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      creditType === "eur" ? "bg-indigo-600 text-white" : "bg-white border border-gray-300 text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    💶 Euro
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {creditType === "tokens" ? "Numero di token" : "Importo in euro (€)"}
+                </label>
                 <input
                   type="number"
-                  min="1"
-                  step="1"
-                  value={walletTokens}
-                  onChange={(e) => setWalletTokens(e.target.value)}
-                  placeholder="es. 1170 = €100"
+                  min="0.01"
+                  step={creditType === "tokens" ? "1" : "0.01"}
+                  value={walletAmount}
+                  onChange={(e) => setWalletAmount(e.target.value)}
+                  placeholder={creditType === "tokens" ? "es. 1170 = €100" : "es. 100.00"}
                   className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
-                {parseInt(walletTokens) > 0 && (
+                {walletAmount && parseFloat(walletAmount) > 0 && (
                   <p className="text-xs text-indigo-600 mt-1">
-                    ≈ €{(parseInt(walletTokens) / TOKENS_PER_EURO).toFixed(2)} in valore token
+                    {creditType === "tokens"
+                      ? `≈ €${(parseInt(walletAmount) / TOKENS_PER_EURO).toFixed(2)} in valore`
+                      : `= ${Math.floor(parseFloat(walletAmount) * TOKENS_PER_EURO).toLocaleString()} token equivalenti`}
                   </p>
                 )}
               </div>
 
-              {/* Scorciatoie comuni */}
+              {/* Importi rapidi */}
               <div>
                 <p className="text-xs text-gray-500 mb-1">Importi rapidi:</p>
                 <div className="flex gap-2 flex-wrap">
-                  {[10, 50, 100, 200, 500].map((eur) => (
+                  {[10, 50, 100, 200, 500].map((val) => (
                     <button
-                      key={eur}
-                      onClick={() => setWalletTokens(String(Math.floor(eur * TOKENS_PER_EURO)))}
+                      key={val}
+                      onClick={() => setWalletAmount(
+                        creditType === "tokens"
+                          ? String(Math.floor(val * TOKENS_PER_EURO))
+                          : String(val)
+                      )}
                       className="text-xs px-3 py-1 rounded-full border border-indigo-300 text-indigo-600 hover:bg-indigo-100"
                     >
-                      €{eur}
+                      €{val}
                     </button>
                   ))}
                 </div>
@@ -351,17 +422,21 @@ export default function AdminPage() {
                   type="text"
                   value={walletReason}
                   onChange={(e) => setWalletReason(e.target.value)}
-                  placeholder="es. Test MVP, Promozione lancio…"
+                  placeholder="es. Simulazione pagamento MVP"
                   className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
 
               <button
                 onClick={handleCreditWallet}
-                disabled={walletLoading || !walletTokens || parseInt(walletTokens) <= 0}
+                disabled={walletLoading || !walletAmount || parseFloat(walletAmount) <= 0}
                 className="w-full bg-indigo-600 text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                {walletLoading ? "Caricamento..." : `✓ Carica ${walletTokens ? parseInt(walletTokens).toLocaleString() : "0"} token`}
+                {walletLoading
+                  ? "Caricamento..."
+                  : creditType === "tokens"
+                    ? `✓ Carica ${walletAmount ? parseInt(walletAmount).toLocaleString() : "0"} token`
+                    : `✓ Carica €${walletAmount ? parseFloat(walletAmount).toFixed(2) : "0.00"}`}
               </button>
             </div>
           )}

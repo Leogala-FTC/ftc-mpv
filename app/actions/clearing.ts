@@ -3,50 +3,37 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 
-const TOKENS_PER_EURO = 11.7;
-
-export async function createClearingRequest(tokenAmount: number) {
+export async function createClearingRequest(eurAmount: number) {
   try {
     const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return { success: false, error: "Non autenticato" };
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      return { success: false, error: "Non autenticato" };
-    }
-
-    // Check merchant wallet balance
+    // Controlla saldo EUR del merchant
     const { data: wallet, error: walletError } = await supabase
       .from("wallets")
-      .select("id, token_balance")
+      .select("id,eur_balance")
       .eq("profile_user_id", user.id)
       .single();
 
-    if (walletError || !wallet) {
-      return { success: false, error: "Wallet non trovato" };
-    }
+    if (walletError || !wallet) return { success: false, error: "Wallet non trovato" };
 
-    if (wallet.token_balance < tokenAmount) {
-      return { success: false, error: "Saldo token insufficiente" };
-    }
+    const currentEur = Number(wallet.eur_balance) || 0;
+    if (currentEur < eurAmount) return { success: false, error: "Saldo insufficiente" };
 
-    // Get IBAN from profile
+    // Recupera IBAN dal profilo
     const { data: profile } = await supabase
       .from("profiles")
       .select("iban")
       .eq("user_id", user.id)
       .single();
 
-    const eurAmount = tokenAmount / TOKENS_PER_EURO;
-
-    // Insert clearing request
+    // Inserisce richiesta di clearing
     const { data: clearing, error: clearingError } = await supabase
       .from("clearing_requests")
       .insert({
         merchant_user_id: user.id,
-        token_amount: tokenAmount,
+        token_amount: 0,
         eur_amount: eurAmount,
         iban: profile?.iban ?? null,
         status: "pending",
@@ -54,29 +41,18 @@ export async function createClearingRequest(tokenAmount: number) {
       .select("id")
       .single();
 
-    if (clearingError) {
-      return { success: false, error: clearingError.message };
-    }
+    if (clearingError) return { success: false, error: clearingError.message };
 
-    // Deduct tokens from wallet
+    // Scala il saldo EUR (messo in "pending" finché non viene pagato)
     await supabase
       .from("wallets")
-      .update({ token_balance: wallet.token_balance - tokenAmount })
+      .update({ eur_balance: currentEur - eurAmount })
       .eq("id", wallet.id);
-
-    // Record token transaction
-    await supabase.from("token_transactions").insert({
-      profile_user_id: user.id,
-      clearing_request_id: clearing.id,
-      direction: "out",
-      amount_tokens: tokenAmount,
-      reason: `Richiesta clearing €${eurAmount.toFixed(2)}`,
-    });
 
     revalidatePath("/merchant/clearing");
     revalidatePath("/merchant");
 
-    return { success: true, clearingId: clearing.id, eurAmount };
+    return { success: true, clearingId: clearing!.id, eurAmount };
   } catch (err) {
     return { success: false, error: String(err) };
   }

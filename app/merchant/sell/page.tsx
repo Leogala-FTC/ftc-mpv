@@ -7,13 +7,11 @@ const TOKENS_PER_EURO = 11.7;
 const FTC_FEE_RATE = 0.05;
 
 export default function MerchantSellPage() {
-  // Step 1: cerca cliente per email
   const [emailInput, setEmailInput] = useState("");
   const [buyer, setBuyer] = useState<{ userId: string; displayName: string; email: string } | null>(null);
   const [emailError, setEmailError] = useState("");
   const [searchLoading, setSearchLoading] = useState(false);
 
-  // Step 2: dati pagamento
   const [amountEur, setAmountEur] = useState("");
   const [cashbackPercent, setCashbackPercent] = useState(5);
   const [note, setNote] = useState("");
@@ -57,12 +55,11 @@ export default function MerchantSellPage() {
     if (res.success && "paymentId" in res) {
       setResult({
         success: true,
-        message: `Pagamento registrato! Il cliente riceverà ${res.cashbackTokens} token di cashback.`,
+        message: `✓ Pagamento registrato! ${buyer.displayName || buyer.email} riceve ${res.cashbackTokens} token di cashback. Il tuo saldo cresce di €${res.merchantEur?.toFixed(2)}.`,
         qr: `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(
           JSON.stringify({ paymentId: res.paymentId, tokens: res.cashbackTokens, eur: amount })
         )}&size=200x200`,
       });
-      // reset
       setBuyer(null);
       setEmailInput("");
       setAmountEur("");
@@ -102,9 +99,7 @@ export default function MerchantSellPage() {
                 {searchLoading ? "..." : "Cerca"}
               </button>
             </div>
-            {emailError && (
-              <p className="text-xs text-red-500">{emailError}</p>
-            )}
+            {emailError && <p className="text-xs text-red-500">{emailError}</p>}
           </div>
         ) : (
           <div className="flex items-center justify-between bg-green-50 rounded-lg px-3 py-2">
@@ -112,10 +107,7 @@ export default function MerchantSellPage() {
               <p className="text-sm font-semibold text-green-800">{buyer.displayName || buyer.email}</p>
               <p className="text-xs text-green-600">{buyer.email}</p>
             </div>
-            <button
-              onClick={() => { setBuyer(null); setEmailInput(""); }}
-              className="text-xs text-gray-400 hover:text-red-500 ml-3"
-            >
+            <button onClick={() => { setBuyer(null); setEmailInput(""); }} className="text-xs text-gray-400 hover:text-red-500 ml-3">
               ✕ cambia
             </button>
           </div>
@@ -127,7 +119,7 @@ export default function MerchantSellPage() {
         <p className="text-sm font-semibold text-gray-700">2. Importo e cashback</p>
 
         <div>
-          <label className="block text-sm text-gray-600 mb-1">Importo pagato dal cliente (€)</label>
+          <label className="block text-sm text-gray-600 mb-1">Totale pagato dal cliente (€)</label>
           <input
             type="number"
             min="0.01"
@@ -169,25 +161,47 @@ export default function MerchantSellPage() {
         </div>
       </div>
 
-      {/* Preview split */}
+      {/* Preview distribuzione */}
       {amount > 0 && (
         <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 mb-4 text-sm space-y-2">
-          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Riepilogo distribuzione</p>
-          <div className="flex justify-between">
-            <span className="text-gray-600">💼 Al merchant (tu)</span>
-            <span className="font-semibold text-green-700">€{merchantEur.toFixed(2)} ({100 - 5 - cashbackPercent}%)</span>
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Distribuzione pagamento</p>
+
+          <div className="flex justify-between items-center">
+            <div className="flex items-center gap-2">
+              <span className="text-base">💼</span>
+              <div>
+                <p className="text-gray-700 font-medium">Al tuo saldo ({100 - 5 - cashbackPercent}%)</p>
+                <p className="text-xs text-gray-400">→ wallet merchant, prelevabile</p>
+              </div>
+            </div>
+            <span className="font-bold text-green-700">€{merchantEur.toFixed(2)}</span>
           </div>
-          <div className="flex justify-between">
-            <span className="text-gray-600">🏦 Commissione FTC (5%)</span>
-            <span className="font-medium">€{ftcFee.toFixed(2)}</span>
+
+          <div className="flex justify-between items-center">
+            <div className="flex items-center gap-2">
+              <span className="text-base">🏦</span>
+              <div>
+                <p className="text-gray-700">Commissione FTC (5%)</p>
+                <p className="text-xs text-gray-400">→ piattaforma</p>
+              </div>
+            </div>
+            <span className="font-medium text-gray-600">€{ftcFee.toFixed(2)}</span>
           </div>
-          <div className="flex justify-between border-t pt-2">
-            <span className="text-gray-600">🎁 Cashback cliente ({cashbackPercent}%)</span>
-            <span className="font-semibold text-indigo-600">{cashbackTokens} token (€{cashbackEur.toFixed(2)})</span>
+
+          <div className="flex justify-between items-center border-t pt-2">
+            <div className="flex items-center gap-2">
+              <span className="text-base">🎁</span>
+              <div>
+                <p className="text-gray-700 font-medium">Cashback cliente ({cashbackPercent}%)</p>
+                <p className="text-xs text-gray-400">→ €{cashbackEur.toFixed(2)} convertiti in token</p>
+              </div>
+            </div>
+            <span className="font-bold text-indigo-600">{cashbackTokens} token</span>
           </div>
+
           <div className="flex justify-between border-t pt-2 text-xs text-gray-400">
-            <span>Totale pagato dal cliente</span>
-            <span>€{amount.toFixed(2)}</span>
+            <span>Totale pagato</span>
+            <span className="font-medium">€{amount.toFixed(2)}</span>
           </div>
         </div>
       )}
@@ -205,8 +219,8 @@ export default function MerchantSellPage() {
           result.success ? "bg-green-50 border border-green-200 text-green-800" : "bg-red-50 border border-red-200 text-red-800"
         }`}>
           <p className="text-sm font-medium">{result.message}</p>
-          {result.qr && (
-            <div className="mt-4 flex justify-center">
+          {result.qr && result.success && (
+            <div className="mt-4 flex flex-col items-center">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={result.qr} alt="QR ricevuta" width={180} height={180} className="rounded-lg" />
               <p className="text-xs text-gray-500 text-center mt-2">QR ricevuta</p>
