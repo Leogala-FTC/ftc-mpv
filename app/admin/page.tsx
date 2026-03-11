@@ -128,7 +128,7 @@ export default function AdminPage() {
   const toggleSelectUser = (id: string) => {
     setSelectedUsers((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) { next.delete(id); } else { next.add(id); }
       return next;
     });
   };
@@ -145,7 +145,8 @@ export default function AdminPage() {
     if (!bulkNotifTitle || !bulkNotifBody || selectedUsers.size === 0) return;
     setNotifLoading(true);
     let sent = 0;
-    for (const uid of Array.from(selectedUsers)) {
+    const targetIds = Array.from(selectedUsers);
+    for (let i = 0; i < targetIds.length; i++) {
       await adminSendNotification({ title: bulkNotifTitle, body: bulkNotifBody, targetRole: undefined });
       sent++;
     }
