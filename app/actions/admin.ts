@@ -139,7 +139,6 @@ export async function adminCreditWallet(
 export async function adminCreditEur(
   targetUserId: string,
   eurAmount: number,
-  reason?: string,
 ) {
   await assertAdmin();
   if (eurAmount <= 0) return { success: false, error: "Importo non valido" };

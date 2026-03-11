@@ -107,7 +107,7 @@ export default function AdminPage() {
       }
     } else {
       const eur = parseFloat(walletAmount);
-      const res = await adminCreditEur(walletTarget.userId, eur, walletReason);
+      const res = await adminCreditEur(walletTarget.userId, eur);
       if (res.success) {
         showMsg("ok", `✓ Caricati €${eur.toFixed(2)} su ${walletTarget.name}`);
         const updated = await getAdminWallets();
