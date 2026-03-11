@@ -177,3 +177,35 @@ export async function getAdminWallets() {
   if (error) return [];
   return data ?? [];
 }
+
+/** Sospendi / riattiva utente */
+export async function adminToggleSuspend(targetUserId: string, suspended: boolean) {
+  await assertAdmin();
+  const db = getServiceClient();
+  const { error } = await db.from("profiles").update({ suspended }).eq("user_id", targetUserId);
+  if (error) return { success: false, error: error.message };
+  return { success: true };
+}
+
+/** Cancella utente (soft: elimina profilo e wallet) */
+export async function adminDeleteUser(targetUserId: string) {
+  await assertAdmin();
+  const db = getServiceClient();
+  await db.from("token_transactions").delete().eq("profile_user_id", targetUserId);
+  await db.from("wallets").delete().eq("profile_user_id", targetUserId);
+  await db.from("profiles").delete().eq("user_id", targetUserId);
+  await db.auth.admin.deleteUser(targetUserId);
+  return { success: true };
+}
+
+/** Aggiunge campo suspended a getAdminUsers */
+export async function getAdminUsersWithStatus() {
+  await assertAdmin();
+  const db = getServiceClient();
+  const { data, error } = await db
+    .from("profiles")
+    .select("user_id,role,full_name,business_name,city,sector,onboarding_completed,created_at,suspended")
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}

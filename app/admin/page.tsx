@@ -1,23 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabase-client";
 import {
-  getAdminUsers, getAdminPayments, getAdminClearings,
+  getAdminPayments, getAdminClearings,
   updateClearingStatus as updateClearingStatusAction,
   adminCreditWallet, adminCreditEur, getAdminWallets,
+  adminToggleSuspend, adminDeleteUser, getAdminUsersWithStatus,
 } from "@/app/actions/admin";
-import {
-  getAdminTopupRequests, approveTopupRequest, rejectTopupRequest,
-} from "@/app/actions/topup";
+import { getAdminTopupRequests, approveTopupRequest, rejectTopupRequest } from "@/app/actions/topup";
+import { adminSendNotification } from "@/app/actions/notifications";
+import { getPlatformSettings, updatePlatformSetting } from "@/app/actions/settings";
 
-type Tab = "users" | "payments" | "clearing" | "wallet" | "topup";
+type Tab = "users" | "payments" | "clearing" | "wallet" | "topup" | "settings";
 
 type UserRow = {
   user_id: string; role: string | null; full_name: string | null;
-  business_name: string | null; city: string | null;
-  onboarding_completed: boolean | null; created_at: string;
+  business_name: string | null; city: string | null; sector: string | null;
+  onboarding_completed: boolean | null; created_at: string; suspended: boolean | null;
 };
 type PaymentRow = {
   id: string; amount_eur: number; fee_eur: number; cashback_tokens: number;
@@ -28,16 +29,18 @@ type ClearingRow = {
   id: string; token_amount: number; eur_amount: number; status: string;
   iban: string | null; created_at: string; merchant_user_id: string;
 };
-type WalletRow = {
-  profile_user_id: string; token_balance: number; eur_balance: number;
-};
+type WalletRow = { profile_user_id: string; token_balance: number; eur_balance: number };
 type TopupRow = {
   id: string; user_id: string; userName: string;
   package_eur: number; tokens: number; status: string; created_at: string;
 };
-
-const TOKENS_PER_EURO = 11.7;
 type CreditType = "tokens" | "eur";
+
+const SECTOR_OPTIONS = [
+  "Bar", "Ristorante", "Pizzeria", "Supermercato", "Abbigliamento",
+  "Farmacia", "Parrucchiere", "Palestra", "Hotel", "Tabaccheria",
+  "Panificio", "Pasticceria", "Altro",
+];
 
 export default function AdminPage() {
   const router = useRouter();
@@ -50,7 +53,20 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [actionMsg, setActionMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
-  // Wallet carica manuale
+  // Users tab state
+  const [searchQuery, setSearchQuery] = useState("");
+  const [roleFilter, setRoleFilter] = useState<string>("all");
+  const [sectorFilter, setSectorFilter] = useState<string>("all");
+  const [selectedUsers, setSelectedUsers] = useState<Set<string>>(new Set());
+  const [bulkNotifTitle, setBulkNotifTitle] = useState("");
+  const [bulkNotifBody, setBulkNotifBody] = useState("");
+  const [bulkNotifOpen, setBulkNotifOpen] = useState(false);
+  const [confirmModal, setConfirmModal] = useState<{
+    action: "suspend" | "unsuspend" | "delete";
+    userId: string; name: string;
+  } | null>(null);
+
+  // Wallet tab state
   const [walletTarget, setWalletTarget] = useState<{ userId: string; name: string; role: string } | null>(null);
   const [creditType, setCreditType] = useState<CreditType>("tokens");
   const [walletAmount, setWalletAmount] = useState("");
@@ -58,22 +74,36 @@ export default function AdminPage() {
   const [walletLoading, setWalletLoading] = useState(false);
   const [walletFilter, setWalletFilter] = useState("");
 
+  // Admin notif state
+  const [notifRole, setNotifRole] = useState("all");
+  const [notifSector, setNotifSector] = useState("");
+  const [notifTitle, setNotifTitle] = useState("");
+  const [notifBody, setNotifBody] = useState("");
+  const [notifLoading, setNotifLoading] = useState(false);
+
+  // Settings state
+  const [feeEur, setFeeEur] = useState(5);
+  const [feeToken, setFeeToken] = useState(3);
+  const [settingsLoading, setSettingsLoading] = useState(false);
+
   useEffect(() => {
-    const load = async () => {
+    async function load() {
       const supabase = getSupabaseClient();
       const { data: authData } = await supabase.auth.getUser();
       if (!authData.user) { router.push("/"); return; }
-
-      const { data: profile } = await supabase
-        .from("profiles").select("role").eq("user_id", authData.user.id).single();
+      const { data: profile } = await supabase.from("profiles").select("role").eq("user_id", authData.user.id).single();
       if (profile?.role !== "admin") { router.push("/"); return; }
-
       try {
-        const [u, p, c, w, t] = await Promise.all([getAdminUsers(), getAdminPayments(), getAdminClearings(), getAdminWallets(), getAdminTopupRequests()]);
-        setUsers(u); setPayments(p); setClearings(c); setWallets(w); setTopupRequests(t);
+        const [u, p, c, w, t, s] = await Promise.all([
+          getAdminUsersWithStatus(), getAdminPayments(), getAdminClearings(),
+          getAdminWallets(), getAdminTopupRequests(), getPlatformSettings(),
+        ]);
+        setUsers(u as UserRow[]); setPayments(p); setClearings(c); setWallets(w); setTopupRequests(t);
+        setFeeEur(s.fee_eur_percent ?? 5);
+        setFeeToken(s.fee_token_percent ?? 3);
       } catch (e) { console.error(e); }
       setLoading(false);
-    };
+    }
     load();
   }, [router]);
 
@@ -82,442 +112,553 @@ export default function AdminPage() {
     setTimeout(() => setActionMsg(null), 5000);
   };
 
+  // Filtered users
+  const filteredUsers = useMemo(() => {
+    return users.filter((u) => {
+      const name = (u.business_name ?? u.full_name ?? "").toLowerCase();
+      const city = (u.city ?? "").toLowerCase();
+      const q = searchQuery.toLowerCase();
+      const matchSearch = !q || name.includes(q) || city.includes(q) || (u.role ?? "").includes(q);
+      const matchRole = roleFilter === "all" || u.role === roleFilter;
+      const matchSector = sectorFilter === "all" || (u.sector ?? "").toLowerCase() === sectorFilter.toLowerCase();
+      return matchSearch && matchRole && matchSector;
+    });
+  }, [users, searchQuery, roleFilter, sectorFilter]);
+
+  const toggleSelectUser = (id: string) => {
+    setSelectedUsers((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedUsers.size === filteredUsers.length) {
+      setSelectedUsers(new Set());
+    } else {
+      setSelectedUsers(new Set(filteredUsers.map((u) => u.user_id)));
+    }
+  };
+
+  async function handleBulkNotif() {
+    if (!bulkNotifTitle || !bulkNotifBody || selectedUsers.size === 0) return;
+    setNotifLoading(true);
+    let sent = 0;
+    for (const uid of Array.from(selectedUsers)) {
+      await adminSendNotification({ title: bulkNotifTitle, body: bulkNotifBody, targetRole: undefined });
+      sent++;
+    }
+    showMsg("ok", `✓ Notifica inviata a ${sent} utenti`);
+    setBulkNotifOpen(false);
+    setBulkNotifTitle("");
+    setBulkNotifBody("");
+    setSelectedUsers(new Set());
+    setNotifLoading(false);
+  }
+
+  async function handleConfirmAction() {
+    if (!confirmModal) return;
+    const { action, userId, name } = confirmModal;
+    setConfirmModal(null);
+    if (action === "delete") {
+      const res = await adminDeleteUser(userId);
+      if (res.success) {
+        setUsers((prev) => prev.filter((u) => u.user_id !== userId));
+        showMsg("ok", `✓ Utente ${name} eliminato`);
+      } else {
+        showMsg("err", "Errore eliminazione");
+      }
+    } else {
+      const suspended = action === "suspend";
+      const res = await adminToggleSuspend(userId, suspended);
+      if (res.success) {
+        setUsers((prev) => prev.map((u) => u.user_id === userId ? { ...u, suspended } : u));
+        showMsg("ok", `✓ Utente ${name} ${suspended ? "sospeso" : "riattivato"}`);
+      } else {
+        showMsg("err", "Errore aggiornamento");
+      }
+    }
+  }
+
+  async function handleSendNotif() {
+    if (!notifTitle || !notifBody) return;
+    setNotifLoading(true);
+    const res = await adminSendNotification({
+      title: notifTitle, body: notifBody,
+      targetRole: notifRole === "all" ? undefined : notifRole,
+      targetSector: notifSector || undefined,
+    });
+    if (res.success) {
+      showMsg("ok", `✓ Notifica inviata a ${res.count} utenti`);
+      setNotifTitle(""); setNotifBody(""); setNotifRole("all"); setNotifSector("");
+    } else {
+      showMsg("err", res.error ?? "Errore");
+    }
+    setNotifLoading(false);
+  }
+
+  async function handleSaveSettings() {
+    setSettingsLoading(true);
+    await Promise.all([
+      updatePlatformSetting("fee_eur_percent", feeEur),
+      updatePlatformSetting("fee_token_percent", feeToken),
+    ]);
+    showMsg("ok", "✓ Fee aggiornate");
+    setSettingsLoading(false);
+  }
+
+  const getWallet = (userId: string) => wallets.find((w) => w.profile_user_id === userId);
+
   const updateClearingStatus = async (id: string, status: string) => {
     const res = await updateClearingStatusAction(id, status);
     if (!res.success) { showMsg("err", "Errore: " + res.error); return; }
     setClearings((prev) => prev.map((c) => c.id === id ? { ...c, status } : c));
-    showMsg("ok", `Richiesta aggiornata → ${status}`);
+    showMsg("ok", `Richiesta → ${status}`);
   };
-
-  const getWallet = (userId: string) => wallets.find(w => w.profile_user_id === userId);
 
   async function handleCreditWallet() {
     if (!walletTarget || !walletAmount || parseFloat(walletAmount) <= 0) return;
     setWalletLoading(true);
-
     if (creditType === "tokens") {
       const tokens = parseInt(walletAmount);
       const res = await adminCreditWallet(walletTarget.userId, tokens, walletReason);
-      if (res.success) {
-        showMsg("ok", `✓ Caricati ${tokens.toLocaleString()} token su ${walletTarget.name} (≈€${res.eurEquiv?.toFixed(2)})`);
-        const updated = await getAdminWallets();
-        setWallets(updated);
-      } else {
-        showMsg("err", "Errore: " + res.error);
-      }
+      if (res.success) { showMsg("ok", `✓ +${tokens} token a ${walletTarget.name}`); }
+      else { showMsg("err", res.error ?? "Errore"); }
     } else {
       const eur = parseFloat(walletAmount);
       const res = await adminCreditEur(walletTarget.userId, eur);
-      if (res.success) {
-        showMsg("ok", `✓ Caricati €${eur.toFixed(2)} su ${walletTarget.name}`);
-        const updated = await getAdminWallets();
-        setWallets(updated);
-      } else {
-        showMsg("err", "Errore: " + res.error);
-      }
+      if (res.success) { showMsg("ok", `✓ +€${eur.toFixed(2)} EUR a ${walletTarget.name}`); }
+      else { showMsg("err", res.error ?? "Errore"); }
     }
-
-    setWalletTarget(null);
-    setWalletAmount("");
-    setWalletReason("");
+    setWalletAmount(""); setWalletReason(""); setWalletTarget(null);
+    const updated = await getAdminWallets();
+    setWallets(updated);
     setWalletLoading(false);
   }
 
-  const fmt = (d: string) => new Date(d).toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric" });
-  const shortId = (id: string) => id.slice(0, 8) + "…";
-
-  const statusColor: Record<string, string> = {
-    pending: "text-yellow-700 bg-yellow-50 border-yellow-200",
-    approved: "text-green-700 bg-green-50 border-green-200",
-    rejected: "text-red-700 bg-red-50 border-red-200",
-    paid: "text-indigo-700 bg-indigo-50 border-indigo-200",
-    completed: "text-green-700 bg-green-50 border-green-200",
+  const handleTopup = async (id: string, action: "approve" | "reject") => {
+    const res = action === "approve" ? await approveTopupRequest(id) : await rejectTopupRequest(id);
+    if (!res.success) { showMsg("err", res.error ?? "Errore"); return; }
+    setTopupRequests((prev) => prev.map((t) => t.id === id ? { ...t, status: action === "approve" ? "approved" : "rejected" } : t));
+    showMsg("ok", `Ricarica ${action === "approve" ? "approvata" : "rifiutata"}`);
   };
 
-  const filteredUsers = users.filter((u) => {
-    const q = walletFilter.toLowerCase();
-    return !q ||
-      (u.full_name ?? "").toLowerCase().includes(q) ||
-      (u.business_name ?? "").toLowerCase().includes(q) ||
-      (u.city ?? "").toLowerCase().includes(q) ||
-      u.role?.includes(q);
-  });
+  const statusBadge = (s: string) => {
+    const map: Record<string, string> = {
+      pending: "bg-yellow-100 text-yellow-700", approved: "bg-green-100 text-green-700",
+      rejected: "bg-red-100 text-red-700", paid: "bg-blue-100 text-blue-700",
+      completed: "bg-green-100 text-green-700",
+    };
+    return map[s] ?? "bg-gray-100 text-gray-600";
+  };
 
-  if (loading) return (
-    <main className="mx-auto max-w-4xl px-4 py-8">
-      <p className="text-sm text-gray-500">Caricamento...</p>
-    </main>
-  );
+  const TABS: { id: Tab; label: string }[] = [
+    { id: "users", label: "👥 Utenti" },
+    { id: "payments", label: "💳 Pagamenti" },
+    { id: "clearing", label: "🏦 Prelievi" },
+    { id: "topup", label: "📥 Ricariche" },
+    { id: "wallet", label: "💰 Wallet" },
+    { id: "settings", label: "⚙️ Impostazioni" },
+  ];
+
+  if (loading) return <main className="mx-auto max-w-4xl px-4 py-8"><p className="text-sm text-gray-500">Caricamento admin...</p></main>;
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-8">
-      <h1 className="text-2xl font-semibold mb-1">Admin Dashboard</h1>
-      <p className="text-sm text-gray-500 mb-6">
-        {users.length} utenti · {payments.length} pagamenti · {clearings.filter(c => c.status === "pending").length} prelievi in attesa · {topupRequests.filter(r => r.status === "pending").length} ricariche da approvare
-      </p>
+    <main className="mx-auto max-w-5xl px-4 py-8">
+      <h1 className="text-2xl font-semibold mb-2">Pannello Admin</h1>
 
       {actionMsg && (
-        <div className={`mb-4 rounded-lg border px-4 py-2 text-sm ${
-          actionMsg.type === "ok" ? "bg-green-50 border-green-200 text-green-700" : "bg-red-50 border-red-200 text-red-700"
-        }`}>
-          {actionMsg.text}
-        </div>
+        <div className={`mb-4 px-4 py-3 rounded-xl text-sm font-medium border ${
+          actionMsg.type === "ok" ? "bg-green-50 text-green-700 border-green-200" : "bg-red-50 text-red-700 border-red-200"
+        }`}>{actionMsg.text}</div>
       )}
 
-      {/* Tab bar */}
-      <div className="flex gap-1 border-b border-gray-200 mb-6 overflow-x-auto">
-        {(["users", "payments", "clearing", "topup", "wallet"] as Tab[]).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`px-4 py-2 text-sm font-medium whitespace-nowrap border-b-2 -mb-px transition-colors ${
-              tab === t ? "border-indigo-600 text-indigo-600" : "border-transparent text-gray-500 hover:text-gray-700"
-            }`}
-          >
-            {t === "users" ? "Utenti"
-              : t === "payments" ? "Pagamenti"
-              : t === "clearing" ? "Prelievi"
-              : t === "topup"
-                ? `🪙 Ricariche${topupRequests.filter(r => r.status === "pending").length > 0 ? ` (${topupRequests.filter(r => r.status === "pending").length})` : ""}`
-              : "💳 Carica Wallet"}
-          </button>
+      {/* Tabs */}
+      <div className="flex gap-1 flex-wrap mb-6 bg-gray-100 p-1 rounded-xl">
+        {TABS.map((t) => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+              tab === t.id ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-700"
+            }`}>{t.label}</button>
         ))}
       </div>
 
-      {/* USERS */}
+      {/* ── TAB UTENTI ─────────────────────────── */}
       {tab === "users" && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100 text-left text-xs text-gray-500">
-                <th className="pb-2 pr-4 font-medium">Nome / Ragione sociale</th>
-                <th className="pb-2 pr-4 font-medium">Ruolo</th>
-                <th className="pb-2 pr-4 font-medium">Saldo</th>
-                <th className="pb-2 pr-4 font-medium">Onboarding</th>
-                <th className="pb-2 font-medium">Data</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => {
-                const w = getWallet(u.user_id);
-                return (
-                  <tr key={u.user_id} className="border-b border-gray-50 hover:bg-gray-50">
-                    <td className="py-2 pr-4 font-medium">{u.full_name ?? u.business_name ?? <span className="text-gray-400">—</span>}</td>
-                    <td className="py-2 pr-4">
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                        u.role === "admin" ? "bg-purple-50 text-purple-700" :
-                        u.role === "merchant" ? "bg-blue-50 text-blue-700" : "bg-gray-100 text-gray-600"
+        <div className="space-y-4">
+          {/* Filtri */}
+          <div className="flex flex-wrap gap-2">
+            <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Cerca nome, città, ruolo..."
+              className="flex-1 min-w-48 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              <option value="all">Tutti i ruoli</option>
+              <option value="user">User</option>
+              <option value="merchant">Merchant</option>
+              <option value="admin">Admin</option>
+            </select>
+            <select value={sectorFilter} onChange={(e) => setSectorFilter(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              <option value="all">Tutti i settori</option>
+              {SECTOR_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
+
+          {/* Selezione massiva */}
+          {selectedUsers.size > 0 && (
+            <div className="flex items-center gap-3 bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-3">
+              <span className="text-sm font-medium text-indigo-700">{selectedUsers.size} selezionati</span>
+              <button onClick={() => setBulkNotifOpen(true)}
+                className="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700">
+                📣 Invia notifica
+              </button>
+              <button onClick={() => setSelectedUsers(new Set())}
+                className="text-xs text-indigo-400 hover:text-indigo-600">Deseleziona tutto</button>
+            </div>
+          )}
+
+          {/* Modal notifica bulk */}
+          {bulkNotifOpen && (
+            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-md mx-4 shadow-xl">
+                <h3 className="text-lg font-semibold mb-4">Invia notifica a {selectedUsers.size} utenti</h3>
+                <input value={bulkNotifTitle} onChange={(e) => setBulkNotifTitle(e.target.value)}
+                  placeholder="Titolo notifica"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                <textarea value={bulkNotifBody} onChange={(e) => setBulkNotifBody(e.target.value)}
+                  placeholder="Testo della notifica..."
+                  rows={3}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                <div className="flex gap-3">
+                  <button onClick={handleBulkNotif} disabled={notifLoading}
+                    className="flex-1 bg-indigo-600 text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50">
+                    {notifLoading ? "Invio..." : "Invia"}
+                  </button>
+                  <button onClick={() => setBulkNotifOpen(false)}
+                    className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm text-gray-600 hover:bg-gray-50">
+                    Annulla
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal conferma azione */}
+          {confirmModal && (
+            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-sm mx-4 shadow-xl">
+                <div className="text-3xl text-center mb-3">{confirmModal.action === "delete" ? "🗑️" : confirmModal.action === "suspend" ? "🚫" : "✅"}</div>
+                <h3 className="text-lg font-semibold text-center mb-2">
+                  {confirmModal.action === "delete" ? "Elimina utente" : confirmModal.action === "suspend" ? "Sospendi utente" : "Riattiva utente"}
+                </h3>
+                <p className="text-sm text-gray-500 text-center mb-1">
+                  {confirmModal.action === "delete"
+                    ? "Questa azione è irreversibile. Verranno eliminati profilo, wallet e transazioni."
+                    : `Confermi di voler ${confirmModal.action === "suspend" ? "sospendere" : "riattivare"} l'utente?`}
+                </p>
+                <p className="text-sm font-semibold text-center text-gray-800 mb-5">{confirmModal.name}</p>
+                <div className="flex gap-3">
+                  <button onClick={handleConfirmAction}
+                    className={`flex-1 py-2.5 rounded-xl text-sm font-semibold text-white ${
+                      confirmModal.action === "delete" ? "bg-red-600 hover:bg-red-700" : "bg-indigo-600 hover:bg-indigo-700"
+                    }`}>
+                    Conferma
+                  </button>
+                  <button onClick={() => setConfirmModal(null)}
+                    className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm text-gray-600 hover:bg-gray-50">
+                    Annulla
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Tabella utenti */}
+          <div className="rounded-xl border border-gray-200 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-3 py-2.5 text-left">
+                    <input type="checkbox"
+                      checked={selectedUsers.size === filteredUsers.length && filteredUsers.length > 0}
+                      onChange={toggleSelectAll}
+                      className="rounded" />
+                  </th>
+                  <th className="px-3 py-2.5 text-left font-medium text-gray-700">Nome</th>
+                  <th className="px-3 py-2.5 text-left font-medium text-gray-700">Ruolo</th>
+                  <th className="px-3 py-2.5 text-left font-medium text-gray-700 hidden sm:table-cell">Settore</th>
+                  <th className="px-3 py-2.5 text-left font-medium text-gray-700 hidden md:table-cell">Città</th>
+                  <th className="px-3 py-2.5 text-left font-medium text-gray-700">Stato</th>
+                  <th className="px-3 py-2.5 text-right font-medium text-gray-700">Azioni</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {filteredUsers.map((u) => (
+                  <tr key={u.user_id} className={`hover:bg-gray-50 ${u.suspended ? "opacity-60" : ""}`}>
+                    <td className="px-3 py-2.5">
+                      <input type="checkbox" checked={selectedUsers.has(u.user_id)} onChange={() => toggleSelectUser(u.user_id)} className="rounded" />
+                    </td>
+                    <td className="px-3 py-2.5 font-medium text-gray-800">
+                      {u.business_name ?? u.full_name ?? <span className="text-gray-400 italic">N/D</span>}
+                    </td>
+                    <td className="px-3 py-2.5">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                        u.role === "admin" ? "bg-purple-100 text-purple-700" :
+                        u.role === "merchant" ? "bg-blue-100 text-blue-700" :
+                        "bg-gray-100 text-gray-600"
                       }`}>{u.role ?? "—"}</span>
                     </td>
-                    <td className="py-2 pr-4 text-xs text-gray-600">
-                      {u.role === "merchant" ? (
-                        <span>€{Number(w?.eur_balance || 0).toFixed(2)}</span>
-                      ) : (
-                        <span>{Number(w?.token_balance || 0).toLocaleString()} token</span>
-                      )}
+                    <td className="px-3 py-2.5 text-gray-500 hidden sm:table-cell">{u.sector ?? "—"}</td>
+                    <td className="px-3 py-2.5 text-gray-500 hidden md:table-cell">{u.city ?? "—"}</td>
+                    <td className="px-3 py-2.5">
+                      {u.suspended
+                        ? <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">Sospeso</span>
+                        : <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">Attivo</span>
+                      }
                     </td>
-                    <td className="py-2 pr-4">
-                      {u.onboarding_completed
-                        ? <span className="text-green-600 text-xs">✓ Sì</span>
-                        : <span className="text-yellow-600 text-xs">⏳ No</span>}
-                    </td>
-                    <td className="py-2 text-gray-500 text-xs">{fmt(u.created_at)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* PAYMENTS */}
-      {tab === "payments" && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100 text-left text-xs text-gray-500">
-                <th className="pb-2 pr-4 font-medium">Data</th>
-                <th className="pb-2 pr-4 font-medium">Totale</th>
-                <th className="pb-2 pr-4 font-medium">→ Merchant</th>
-                <th className="pb-2 pr-4 font-medium">→ FTC (5%)</th>
-                <th className="pb-2 pr-4 font-medium">→ Cashback</th>
-                <th className="pb-2 font-medium">Stato</th>
-              </tr>
-            </thead>
-            <tbody>
-              {payments.map((p) => {
-                const cashbackEur = p.amount_eur * (p.cashback_percent / 100);
-                const merchantEur = p.amount_eur - p.fee_eur - cashbackEur;
-                return (
-                  <tr key={p.id} className="border-b border-gray-50 hover:bg-gray-50">
-                    <td className="py-2 pr-4 text-gray-500 text-xs">{fmt(p.created_at)}</td>
-                    <td className="py-2 pr-4 font-semibold">€{Number(p.amount_eur).toFixed(2)}</td>
-                    <td className="py-2 pr-4 text-green-700 font-medium">€{merchantEur.toFixed(2)}</td>
-                    <td className="py-2 pr-4 text-gray-600">€{Number(p.fee_eur).toFixed(2)}</td>
-                    <td className="py-2 pr-4 text-indigo-600">{p.cashback_tokens} token ({p.cashback_percent}%)</td>
-                    <td className="py-2">
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium border ${statusColor[p.status] ?? "bg-gray-50 text-gray-600"}`}>
-                        {p.status}
-                      </span>
+                    <td className="px-3 py-2.5 text-right">
+                      <div className="flex gap-1 justify-end">
+                        <button
+                          onClick={() => setConfirmModal({ action: u.suspended ? "unsuspend" : "suspend", userId: u.user_id, name: u.business_name ?? u.full_name ?? u.user_id })}
+                          className="text-xs px-2 py-1 rounded-lg border border-gray-300 hover:bg-gray-100 text-gray-600"
+                          title={u.suspended ? "Riattiva" : "Sospendi"}>
+                          {u.suspended ? "✅" : "🚫"}
+                        </button>
+                        <button
+                          onClick={() => setConfirmModal({ action: "delete", userId: u.user_id, name: u.business_name ?? u.full_name ?? u.user_id })}
+                          className="text-xs px-2 py-1 rounded-lg border border-red-200 hover:bg-red-50 text-red-600"
+                          title="Elimina">
+                          🗑️
+                        </button>
+                      </div>
                     </td>
                   </tr>
-                );
-              })}
-              {payments.length === 0 && <tr><td colSpan={6} className="py-6 text-center text-gray-400 text-sm">Nessun pagamento.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* CLEARING / PRELIEVI */}
-      {tab === "clearing" && (
-        <div className="space-y-3">
-          {clearings.map((c) => (
-            <div key={c.id} className="rounded-xl border border-gray-100 bg-white px-4 py-4">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-sm font-semibold">Prelievo €{Number(c.eur_amount).toFixed(2)}</p>
-                  <p className="text-xs text-gray-400 mt-0.5">merchant: {shortId(c.merchant_user_id)}</p>
-                  {c.iban && <p className="text-xs text-gray-500 mt-0.5 font-mono">{c.iban}</p>}
-                  <p className="text-xs text-gray-400 mt-1">{fmt(c.created_at)}</p>
-                </div>
-                <div className="flex flex-col items-end gap-2">
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-medium border whitespace-nowrap ${statusColor[c.status] ?? "bg-gray-50 text-gray-600"}`}>
-                    {c.status}
-                  </span>
-                  {c.status === "pending" && (
-                    <div className="flex gap-1">
-                      <button onClick={() => updateClearingStatus(c.id, "approved")} className="text-xs px-2 py-1 rounded bg-green-100 text-green-700 hover:bg-green-200">Approva</button>
-                      <button onClick={() => updateClearingStatus(c.id, "paid")} className="text-xs px-2 py-1 rounded bg-indigo-100 text-indigo-700 hover:bg-indigo-200">Pagata</button>
-                      <button onClick={() => updateClearingStatus(c.id, "rejected")} className="text-xs px-2 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200">Rifiuta</button>
-                    </div>
-                  )}
-                  {c.status === "approved" && (
-                    <button onClick={() => updateClearingStatus(c.id, "paid")} className="text-xs px-2 py-1 rounded bg-indigo-100 text-indigo-700 hover:bg-indigo-200">Segna pagata</button>
-                  )}
-                </div>
-              </div>
-            </div>
-          ))}
-          {clearings.length === 0 && <p className="text-sm text-gray-400 py-4 text-center">Nessuna richiesta.</p>}
-        </div>
-      )}
-
-      {/* RICARICHE */}
-      {tab === "topup" && (
-        <div className="space-y-3">
-          {topupRequests.length === 0 && (
-            <p className="text-sm text-gray-400 py-4 text-center">Nessuna richiesta di ricarica.</p>
-          )}
-          {topupRequests.map((r) => (
-            <div key={r.id} className={`rounded-xl border bg-white px-4 py-4 ${r.status === "pending" ? "border-yellow-200" : "border-gray-100"}`}>
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-semibold">{r.userName}</p>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium border ${
-                      r.status === "pending" ? "text-yellow-700 bg-yellow-50 border-yellow-200"
-                      : r.status === "approved" ? "text-green-700 bg-green-50 border-green-200"
-                      : "text-red-700 bg-red-50 border-red-200"
-                    }`}>
-                      {r.status === "pending" ? "⏳ In attesa" : r.status === "approved" ? "✓ Approvata" : "✕ Rifiutata"}
-                    </span>
-                  </div>
-                  <p className="text-sm text-gray-600 mt-1">
-                    €{r.package_eur} → <span className="font-semibold text-indigo-600">{r.tokens.toLocaleString()} token</span>
-                  </p>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    {new Date(r.created_at).toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
-                  </p>
-                </div>
-                {r.status === "pending" && (
-                  <div className="flex gap-2 shrink-0">
-                    <button
-                      onClick={async () => {
-                        const res = await approveTopupRequest(r.id);
-                        if (res.success) {
-                          setTopupRequests(prev => prev.map(x => x.id === r.id ? { ...x, status: "approved" } : x));
-                          showMsg("ok", `✓ Approvata: ${r.tokens.toLocaleString()} token → ${r.userName}`);
-                        } else {
-                          showMsg("err", res.error ?? "Errore");
-                        }
-                      }}
-                      className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-semibold hover:bg-green-700 transition-colors"
-                    >
-                      ✓ Approva
-                    </button>
-                    <button
-                      onClick={async () => {
-                        const res = await rejectTopupRequest(r.id);
-                        if (res.success) {
-                          setTopupRequests(prev => prev.map(x => x.id === r.id ? { ...x, status: "rejected" } : x));
-                          showMsg("ok", `Richiesta di ${r.userName} rifiutata`);
-                        } else {
-                          showMsg("err", res.error ?? "Errore");
-                        }
-                      }}
-                      className="px-3 py-1.5 rounded-lg bg-red-100 text-red-700 text-xs font-semibold hover:bg-red-200 transition-colors"
-                    >
-                      ✕ Rifiuta
-                    </button>
-                  </div>
+                ))}
+                {filteredUsers.length === 0 && (
+                  <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-400">Nessun utente trovato</td></tr>
                 )}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-gray-400">{filteredUsers.length} di {users.length} utenti</p>
+        </div>
+      )}
+
+      {/* ── TAB PAGAMENTI ──────────────────────── */}
+      {tab === "payments" && (
+        <div className="space-y-2">
+          {payments.length === 0 && <p className="text-sm text-gray-500">Nessun pagamento.</p>}
+          {payments.map((p) => (
+            <div key={p.id} className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+              <div className="flex justify-between items-start">
+                <div>
+                  <p className="text-sm font-medium text-gray-800">€{Number(p.amount_eur).toFixed(2)} · {p.cashback_percent}% cashback</p>
+                  <p className="text-xs text-gray-500 mt-0.5">+{p.cashback_tokens} token al cliente · fee €{Number(p.fee_eur).toFixed(2)}</p>
+                  <p className="text-xs text-gray-400 mt-0.5">{new Date(p.created_at).toLocaleDateString("it-IT")}</p>
+                </div>
+                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusBadge(p.status)}`}>{p.status}</span>
               </div>
             </div>
           ))}
         </div>
       )}
 
-      {/* CARICA WALLET */}
-      {tab === "wallet" && (
-        <div className="max-w-lg">
-          <p className="text-sm text-gray-600 mb-6">
-            Strumento MVP per simulare i pagamenti Stripe. Carica <strong>token</strong> per utenti (cashback manuale) o <strong>euro</strong> per merchant (incasso simulato).
-          </p>
+      {/* ── TAB PRELIEVI ───────────────────────── */}
+      {tab === "clearing" && (
+        <div className="space-y-2">
+          {clearings.length === 0 && <p className="text-sm text-gray-500">Nessuna richiesta.</p>}
+          {clearings.map((c) => (
+            <div key={c.id} className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+              <div className="flex justify-between items-start gap-3">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-gray-800">€{Number(c.eur_amount).toFixed(2)} · {c.token_amount} token</p>
+                  {c.iban && <p className="text-xs text-gray-500 mt-0.5 font-mono">{c.iban}</p>}
+                  <p className="text-xs text-gray-400 mt-0.5">{new Date(c.created_at).toLocaleDateString("it-IT")}</p>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusBadge(c.status)}`}>{c.status}</span>
+                  {c.status === "pending" && (
+                    <>
+                      <button onClick={() => updateClearingStatus(c.id, "approved")}
+                        className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-lg hover:bg-green-200">Approva</button>
+                      <button onClick={() => updateClearingStatus(c.id, "paid")}
+                        className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-lg hover:bg-blue-200">Pagata</button>
+                      <button onClick={() => updateClearingStatus(c.id, "rejected")}
+                        className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-lg hover:bg-red-200">Rifiuta</button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
-          {/* Seleziona destinatario */}
-          <div className="mb-6">
-            <label className="block text-sm font-semibold text-gray-700 mb-2">1. Seleziona destinatario</label>
-            <input
-              type="text"
-              value={walletFilter}
-              onChange={(e) => setWalletFilter(e.target.value)}
-              placeholder="Filtra per nome, ruolo, città…"
-              className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
-            <div className="max-h-52 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
-              {filteredUsers.map((u) => {
-                const name = u.full_name ?? u.business_name ?? "—";
-                const isSelected = walletTarget?.userId === u.user_id;
-                const w = getWallet(u.user_id);
-                return (
-                  <button
-                    key={u.user_id}
-                    onClick={() => {
-                      setWalletTarget({ userId: u.user_id, name, role: u.role ?? "" });
-                      setCreditType(u.role === "merchant" ? "eur" : "tokens");
-                      setWalletAmount("");
-                    }}
-                    className={`w-full flex items-center justify-between px-3 py-2.5 text-sm text-left hover:bg-gray-50 transition-colors ${
-                      isSelected ? "bg-indigo-50 border-l-2 border-indigo-500" : ""
-                    }`}
-                  >
-                    <div>
-                      <span className={`font-medium ${isSelected ? "text-indigo-700" : ""}`}>{name}</span>
-                      <span className="text-xs text-gray-400 ml-2">
-                        {u.role === "merchant"
-                          ? `€${Number(w?.eur_balance || 0).toFixed(2)}`
-                          : `${Number(w?.token_balance || 0).toLocaleString()} tk`}
-                      </span>
+      {/* ── TAB RICARICHE ──────────────────────── */}
+      {tab === "topup" && (
+        <div className="space-y-2">
+          {topupRequests.length === 0 && <p className="text-sm text-gray-500">Nessuna ricarica.</p>}
+          {topupRequests.map((t) => (
+            <div key={t.id} className="rounded-xl border border-gray-200 bg-white px-4 py-3">
+              <div className="flex justify-between items-start gap-3">
+                <div>
+                  <p className="text-sm font-medium text-gray-800">{t.userName} · €{Number(t.package_eur).toFixed(0)} → {t.tokens} token</p>
+                  <p className="text-xs text-gray-400 mt-0.5">{new Date(t.created_at).toLocaleDateString("it-IT")}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusBadge(t.status)}`}>{t.status}</span>
+                  {t.status === "pending" && (
+                    <>
+                      <button onClick={() => handleTopup(t.id, "approve")}
+                        className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded-lg hover:bg-green-200">Approva</button>
+                      <button onClick={() => handleTopup(t.id, "reject")}
+                        className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-lg hover:bg-red-200">Rifiuta</button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── TAB WALLET ─────────────────────────── */}
+      {tab === "wallet" && (
+        <div className="space-y-4">
+          <div>
+            <input value={walletFilter} onChange={(e) => setWalletFilter(e.target.value)}
+              placeholder="Cerca utente..."
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 mb-3" />
+            <div className="space-y-1">
+              {users
+                .filter((u) => !walletFilter || (u.full_name ?? u.business_name ?? "").toLowerCase().includes(walletFilter.toLowerCase()))
+                .map((u) => {
+                  const w = getWallet(u.user_id);
+                  return (
+                    <div key={u.user_id} className="flex items-center justify-between rounded-xl border border-gray-100 bg-white px-4 py-3">
+                      <div>
+                        <p className="text-sm font-medium text-gray-800">{u.business_name ?? u.full_name ?? "—"}</p>
+                        <p className="text-xs text-gray-500">{u.role} · {u.city ?? "—"}</p>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div className="text-right text-xs">
+                          <p className="font-semibold text-indigo-700">{(w?.token_balance ?? 0).toLocaleString()} tok</p>
+                          <p className="text-gray-500">€{Number(w?.eur_balance ?? 0).toFixed(2)}</p>
+                        </div>
+                        <button onClick={() => { setWalletTarget({ userId: u.user_id, name: u.business_name ?? u.full_name ?? "—", role: u.role ?? "" }); setCreditType("tokens"); setWalletAmount(""); setWalletReason(""); }}
+                          className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-1 rounded-lg hover:bg-indigo-100">
+                          Carica
+                        </button>
+                      </div>
                     </div>
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${
-                      u.role === "merchant" ? "bg-blue-50 text-blue-600" :
-                      u.role === "admin" ? "bg-purple-50 text-purple-600" : "bg-gray-100 text-gray-500"
-                    }`}>{u.role}</span>
-                  </button>
-                );
-              })}
-              {filteredUsers.length === 0 && <p className="text-xs text-gray-400 text-center py-4">Nessun utente trovato</p>}
+                  );
+                })}
             </div>
           </div>
 
-          {/* Form carica */}
           {walletTarget && (
-            <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-semibold text-indigo-800">→ {walletTarget.name}</p>
-                <button onClick={() => setWalletTarget(null)} className="text-xs text-gray-400 hover:text-red-500">✕</button>
-              </div>
-
-              {/* Toggle tipo credito */}
-              <div>
-                <p className="text-xs font-medium text-gray-600 mb-2">Tipo di carica:</p>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => { setCreditType("tokens"); setWalletAmount(""); }}
-                    className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      creditType === "tokens" ? "bg-indigo-600 text-white" : "bg-white border border-gray-300 text-gray-600 hover:bg-gray-50"
-                    }`}
-                  >
-                    🪙 Token
+            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+              <div className="bg-white rounded-2xl p-6 w-full max-w-sm mx-4 shadow-xl">
+                <h3 className="text-lg font-semibold mb-1">Carica wallet</h3>
+                <p className="text-sm text-gray-500 mb-4">{walletTarget.name}</p>
+                <div className="flex gap-2 mb-3">
+                  <button onClick={() => setCreditType("tokens")}
+                    className={`flex-1 py-2 rounded-lg text-sm font-medium border ${creditType === "tokens" ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}>
+                    Token
                   </button>
-                  <button
-                    onClick={() => { setCreditType("eur"); setWalletAmount(""); }}
-                    className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      creditType === "eur" ? "bg-indigo-600 text-white" : "bg-white border border-gray-300 text-gray-600 hover:bg-gray-50"
-                    }`}
-                  >
-                    💶 Euro
+                  <button onClick={() => setCreditType("eur")}
+                    className={`flex-1 py-2 rounded-lg text-sm font-medium border ${creditType === "eur" ? "bg-indigo-600 text-white border-indigo-600" : "border-gray-300 text-gray-600 hover:bg-gray-50"}`}>
+                    EUR
+                  </button>
+                </div>
+                <input type="number" value={walletAmount} onChange={(e) => setWalletAmount(e.target.value)}
+                  placeholder={creditType === "tokens" ? "Numero token" : "Importo €"}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                <input type="text" value={walletReason} onChange={(e) => setWalletReason(e.target.value)}
+                  placeholder="Causale (opzionale)"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                <div className="flex gap-3">
+                  <button onClick={handleCreditWallet} disabled={walletLoading}
+                    className="flex-1 bg-indigo-600 text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50">
+                    {walletLoading ? "..." : "Conferma"}
+                  </button>
+                  <button onClick={() => setWalletTarget(null)}
+                    className="flex-1 border border-gray-300 py-2.5 rounded-xl text-sm text-gray-600 hover:bg-gray-50">
+                    Annulla
                   </button>
                 </div>
               </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {creditType === "tokens" ? "Numero di token" : "Importo in euro (€)"}
-                </label>
-                <input
-                  type="number"
-                  min="0.01"
-                  step={creditType === "tokens" ? "1" : "0.01"}
-                  value={walletAmount}
-                  onChange={(e) => setWalletAmount(e.target.value)}
-                  placeholder={creditType === "tokens" ? "es. 1170 = €100" : "es. 100.00"}
-                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-                {walletAmount && parseFloat(walletAmount) > 0 && (
-                  <p className="text-xs text-indigo-600 mt-1">
-                    {creditType === "tokens"
-                      ? `≈ €${(parseInt(walletAmount) / TOKENS_PER_EURO).toFixed(2)} in valore`
-                      : `= ${Math.floor(parseFloat(walletAmount) * TOKENS_PER_EURO).toLocaleString()} token equivalenti`}
-                  </p>
-                )}
-              </div>
-
-              {/* Importi rapidi */}
-              <div>
-                <p className="text-xs text-gray-500 mb-1">Importi rapidi:</p>
-                <div className="flex gap-2 flex-wrap">
-                  {[10, 50, 100, 200, 500].map((val) => (
-                    <button
-                      key={val}
-                      onClick={() => setWalletAmount(
-                        creditType === "tokens"
-                          ? String(Math.floor(val * TOKENS_PER_EURO))
-                          : String(val)
-                      )}
-                      className="text-xs px-3 py-1 rounded-full border border-indigo-300 text-indigo-600 hover:bg-indigo-100"
-                    >
-                      €{val}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Causale (opzionale)</label>
-                <input
-                  type="text"
-                  value={walletReason}
-                  onChange={(e) => setWalletReason(e.target.value)}
-                  placeholder="es. Simulazione pagamento MVP"
-                  className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-
-              <button
-                onClick={handleCreditWallet}
-                disabled={walletLoading || !walletAmount || parseFloat(walletAmount) <= 0}
-                className="w-full bg-indigo-600 text-white py-2.5 rounded-lg text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {walletLoading
-                  ? "Caricamento..."
-                  : creditType === "tokens"
-                    ? `✓ Carica ${walletAmount ? parseInt(walletAmount).toLocaleString() : "0"} token`
-                    : `✓ Carica €${walletAmount ? parseFloat(walletAmount).toFixed(2) : "0.00"}`}
-              </button>
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── TAB IMPOSTAZIONI ───────────────────── */}
+      {tab === "settings" && (
+        <div className="space-y-6 max-w-lg">
+          {/* Fee */}
+          <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <h2 className="text-base font-semibold text-gray-800 mb-4">💸 Fee di piattaforma</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Fee su pagamenti EUR (POS/Stripe)
+                </label>
+                <div className="flex items-center gap-3">
+                  <input type="number" min={0} max={20} step={0.5} value={feeEur} onChange={(e) => setFeeEur(parseFloat(e.target.value))}
+                    className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <span className="text-sm text-gray-500">% trattenuta dal merchant</span>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Fee su pagamenti Token (QR)
+                </label>
+                <div className="flex items-center gap-3">
+                  <input type="number" min={0} max={20} step={0.5} value={feeToken} onChange={(e) => setFeeToken(parseFloat(e.target.value))}
+                    className="w-24 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                  <span className="text-sm text-gray-500">% nascosta (carico cliente)</span>
+                </div>
+              </div>
+            </div>
+            <button onClick={handleSaveSettings} disabled={settingsLoading}
+              className="mt-5 w-full bg-indigo-600 text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50">
+              {settingsLoading ? "Salvataggio..." : "Salva fee"}
+            </button>
+          </div>
+
+          {/* Notifiche admin */}
+          <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <h2 className="text-base font-semibold text-gray-800 mb-4">📣 Invia comunicazione</h2>
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <select value={notifRole} onChange={(e) => setNotifRole(e.target.value)}
+                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                  <option value="all">Tutti gli utenti</option>
+                  <option value="user">Solo User</option>
+                  <option value="merchant">Solo Merchant</option>
+                </select>
+                <select value={notifSector} onChange={(e) => setNotifSector(e.target.value)}
+                  className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                  <option value="">Tutti i settori</option>
+                  {SECTOR_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <input value={notifTitle} onChange={(e) => setNotifTitle(e.target.value)}
+                placeholder="Titolo notifica"
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <textarea value={notifBody} onChange={(e) => setNotifBody(e.target.value)}
+                placeholder="Testo del messaggio..."
+                rows={3}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              <button onClick={handleSendNotif} disabled={notifLoading || !notifTitle || !notifBody}
+                className="w-full bg-indigo-600 text-white py-2.5 rounded-xl text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50">
+                {notifLoading ? "Invio..." : "Invia notifica"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </main>
