@@ -8,8 +8,11 @@ import {
   updateClearingStatus as updateClearingStatusAction,
   adminCreditWallet, adminCreditEur, getAdminWallets,
 } from "@/app/actions/admin";
+import {
+  getAdminTopupRequests, approveTopupRequest, rejectTopupRequest,
+} from "@/app/actions/topup";
 
-type Tab = "users" | "payments" | "clearing" | "wallet";
+type Tab = "users" | "payments" | "clearing" | "wallet" | "topup";
 
 type UserRow = {
   user_id: string; role: string | null; full_name: string | null;
@@ -28,6 +31,10 @@ type ClearingRow = {
 type WalletRow = {
   profile_user_id: string; token_balance: number; eur_balance: number;
 };
+type TopupRow = {
+  id: string; user_id: string; userName: string;
+  package_eur: number; tokens: number; status: string; created_at: string;
+};
 
 const TOKENS_PER_EURO = 11.7;
 type CreditType = "tokens" | "eur";
@@ -39,6 +46,7 @@ export default function AdminPage() {
   const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [clearings, setClearings] = useState<ClearingRow[]>([]);
   const [wallets, setWallets] = useState<WalletRow[]>([]);
+  const [topupRequests, setTopupRequests] = useState<TopupRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionMsg, setActionMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
 
@@ -61,8 +69,8 @@ export default function AdminPage() {
       if (profile?.role !== "admin") { router.push("/"); return; }
 
       try {
-        const [u, p, c, w] = await Promise.all([getAdminUsers(), getAdminPayments(), getAdminClearings(), getAdminWallets()]);
-        setUsers(u); setPayments(p); setClearings(c); setWallets(w);
+        const [u, p, c, w, t] = await Promise.all([getAdminUsers(), getAdminPayments(), getAdminClearings(), getAdminWallets(), getAdminTopupRequests()]);
+        setUsers(u); setPayments(p); setClearings(c); setWallets(w); setTopupRequests(t);
       } catch (e) { console.error(e); }
       setLoading(false);
     };
@@ -145,7 +153,7 @@ export default function AdminPage() {
     <main className="mx-auto max-w-4xl px-4 py-8">
       <h1 className="text-2xl font-semibold mb-1">Admin Dashboard</h1>
       <p className="text-sm text-gray-500 mb-6">
-        {users.length} utenti · {payments.length} pagamenti · {clearings.filter(c => c.status === "pending").length} prelievi in attesa
+        {users.length} utenti · {payments.length} pagamenti · {clearings.filter(c => c.status === "pending").length} prelievi in attesa · {topupRequests.filter(r => r.status === "pending").length} ricariche da approvare
       </p>
 
       {actionMsg && (
@@ -158,7 +166,7 @@ export default function AdminPage() {
 
       {/* Tab bar */}
       <div className="flex gap-1 border-b border-gray-200 mb-6 overflow-x-auto">
-        {(["users", "payments", "clearing", "wallet"] as Tab[]).map((t) => (
+        {(["users", "payments", "clearing", "topup", "wallet"] as Tab[]).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -166,7 +174,12 @@ export default function AdminPage() {
               tab === t ? "border-indigo-600 text-indigo-600" : "border-transparent text-gray-500 hover:text-gray-700"
             }`}
           >
-            {t === "users" ? "Utenti" : t === "payments" ? "Pagamenti" : t === "clearing" ? "Prelievi" : "💳 Carica Wallet"}
+            {t === "users" ? "Utenti"
+              : t === "payments" ? "Pagamenti"
+              : t === "clearing" ? "Prelievi"
+              : t === "topup"
+                ? `🪙 Ricariche${topupRequests.filter(r => r.status === "pending").length > 0 ? ` (${topupRequests.filter(r => r.status === "pending").length})` : ""}`
+              : "💳 Carica Wallet"}
           </button>
         ))}
       </div>
@@ -287,6 +300,71 @@ export default function AdminPage() {
             </div>
           ))}
           {clearings.length === 0 && <p className="text-sm text-gray-400 py-4 text-center">Nessuna richiesta.</p>}
+        </div>
+      )}
+
+      {/* RICARICHE */}
+      {tab === "topup" && (
+        <div className="space-y-3">
+          {topupRequests.length === 0 && (
+            <p className="text-sm text-gray-400 py-4 text-center">Nessuna richiesta di ricarica.</p>
+          )}
+          {topupRequests.map((r) => (
+            <div key={r.id} className={`rounded-xl border bg-white px-4 py-4 ${r.status === "pending" ? "border-yellow-200" : "border-gray-100"}`}>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold">{r.userName}</p>
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium border ${
+                      r.status === "pending" ? "text-yellow-700 bg-yellow-50 border-yellow-200"
+                      : r.status === "approved" ? "text-green-700 bg-green-50 border-green-200"
+                      : "text-red-700 bg-red-50 border-red-200"
+                    }`}>
+                      {r.status === "pending" ? "⏳ In attesa" : r.status === "approved" ? "✓ Approvata" : "✕ Rifiutata"}
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-600 mt-1">
+                    €{r.package_eur} → <span className="font-semibold text-indigo-600">{r.tokens.toLocaleString()} token</span>
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {new Date(r.created_at).toLocaleDateString("it-IT", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </p>
+                </div>
+                {r.status === "pending" && (
+                  <div className="flex gap-2 shrink-0">
+                    <button
+                      onClick={async () => {
+                        const res = await approveTopupRequest(r.id);
+                        if (res.success) {
+                          setTopupRequests(prev => prev.map(x => x.id === r.id ? { ...x, status: "approved" } : x));
+                          showMsg("ok", `✓ Approvata: ${r.tokens.toLocaleString()} token → ${r.userName}`);
+                        } else {
+                          showMsg("err", res.error ?? "Errore");
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-xs font-semibold hover:bg-green-700 transition-colors"
+                    >
+                      ✓ Approva
+                    </button>
+                    <button
+                      onClick={async () => {
+                        const res = await rejectTopupRequest(r.id);
+                        if (res.success) {
+                          setTopupRequests(prev => prev.map(x => x.id === r.id ? { ...x, status: "rejected" } : x));
+                          showMsg("ok", `Richiesta di ${r.userName} rifiutata`);
+                        } else {
+                          showMsg("err", res.error ?? "Errore");
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-red-100 text-red-700 text-xs font-semibold hover:bg-red-200 transition-colors"
+                    >
+                      ✕ Rifiuta
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
