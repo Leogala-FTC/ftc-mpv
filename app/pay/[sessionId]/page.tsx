@@ -67,7 +67,7 @@ export default function PayPage() {
         Hai pagato <strong>{sessionData.total_tokens.toLocaleString()} token</strong>
       </p>
       <p className="text-sm text-gray-500 mb-6">
-        a {sessionData.merchantName} per €{Number(sessionData.amount_eur).toFixed(2)}
+        a {sessionData.merchantName}
       </p>
       <button
         onClick={() => router.push("/user")}
