@@ -12,7 +12,7 @@ import {
 } from "@/app/actions/admin";
 import { getAdminTopupRequests, approveTopupRequest, rejectTopupRequest } from "@/app/actions/topup";
 import { adminSendNotification } from "@/app/actions/notifications";
-import { getPlatformSettings, updatePlatformSetting } from "@/app/actions/settings";
+import { getPlatformSettings, updatePlatformSetting, getAdminMerchantFees, setMerchantFeeOverride } from "@/app/actions/settings";
 
 type Tab = "users" | "payments" | "clearing" | "wallet" | "topup" | "settings" | "fee-merchant";
 
@@ -37,6 +37,12 @@ type TopupRow = {
   package_eur: number; tokens: number; status: string; created_at: string;
 };
 type CreditType = "tokens" | "eur";
+
+type MerchantFeeRow = {
+  userId: string; name: string; city: string; sector: string;
+  feeEur: number | null; feeToken: number | null;
+  globalFeeEur: number; globalFeeToken: number;
+};
 
 const SECTOR_OPTIONS = [
   "Bar", "Ristorante", "Pizzeria", "Supermercato", "Abbigliamento",
@@ -88,6 +94,11 @@ export default function AdminPage() {
   const [feeToken, setFeeToken] = useState(3);
   const [settingsLoading, setSettingsLoading] = useState(false);
 
+  // Fee merchant tab state
+  const [merchantFeeRows, setMerchantFeeRows] = useState<MerchantFeeRow[]>([]);
+  const [merchantFeeDrafts, setMerchantFeeDrafts] = useState<Record<string, { eur: string; token: string }>>({});
+  const [merchantFeeSaving, setMerchantFeeSaving] = useState<string | null>(null);
+
   useEffect(() => {
     async function load() {
       const supabase = getSupabaseClient();
@@ -96,13 +107,19 @@ export default function AdminPage() {
       const { data: profile } = await supabase.from("profiles").select("role").eq("user_id", authData.user.id).single();
       if (profile?.role !== "admin") { router.push("/"); return; }
       try {
-        const [u, p, c, w, t, s] = await Promise.all([
+        const [u, p, c, w, t, s, mf] = await Promise.all([
           getAdminUsersWithStatus(), getAdminPayments(), getAdminClearings(),
           getAdminWallets(), getAdminTopupRequests(), getPlatformSettings(),
+          getAdminMerchantFees(),
         ]);
         setUsers(u as UserRow[]); setPayments(p); setClearings(c); setWallets(w); setTopupRequests(t);
         setFeeEur(s.fee_eur_percent ?? 5);
         setFeeToken(s.fee_token_percent ?? 3);
+        const rows = mf as MerchantFeeRow[];
+        setMerchantFeeRows(rows);
+        const drafts: Record<string, { eur: string; token: string }> = {};
+        rows.forEach((m) => { drafts[m.userId] = { eur: m.feeEur != null ? String(m.feeEur) : "", token: m.feeToken != null ? String(m.feeToken) : "" }; });
+        setMerchantFeeDrafts(drafts);
       } catch (e) { console.error(e); }
       setLoading(false);
     }
@@ -199,6 +216,30 @@ export default function AdminPage() {
       showMsg("err", res.error ?? "Errore");
     }
     setNotifLoading(false);
+  }
+
+  async function handleSaveMerchantFee(merchantId: string) {
+    setMerchantFeeSaving(merchantId);
+    const d = merchantFeeDrafts[merchantId];
+    const feeEurVal = d?.eur !== "" ? parseFloat(d.eur) : null;
+    const feeTokenVal = d?.token !== "" ? parseFloat(d.token) : null;
+    const res = await setMerchantFeeOverride(merchantId, feeEurVal, feeTokenVal);
+    if (res.success) {
+      setMerchantFeeRows((prev) => prev.map((m) => m.userId === merchantId ? { ...m, feeEur: feeEurVal, feeToken: feeTokenVal } : m));
+      showMsg("ok", `✓ Fee aggiornate per ${merchantFeeRows.find(m => m.userId === merchantId)?.name}`);
+    } else {
+      showMsg("err", "Errore salvataggio fee");
+    }
+    setMerchantFeeSaving(null);
+  }
+
+  async function handleResetMerchantFee(merchantId: string) {
+    setMerchantFeeSaving(merchantId);
+    await setMerchantFeeOverride(merchantId, null, null);
+    setMerchantFeeRows((prev) => prev.map((m) => m.userId === merchantId ? { ...m, feeEur: null, feeToken: null } : m));
+    setMerchantFeeDrafts((prev) => ({ ...prev, [merchantId]: { eur: "", token: "" } }));
+    showMsg("ok", "✓ Fee ripristinata al valore globale");
+    setMerchantFeeSaving(null);
   }
 
   async function handleSaveSettings() {
@@ -614,14 +655,87 @@ export default function AdminPage() {
 
       {/* ── TAB FEE MERCHANT ──────────────────── */}
       {tab === "fee-merchant" && (
-        <div className="py-4 text-center">
-          <p className="text-sm text-gray-500 mb-4">
-            Gestisci fee personalizzate per singolo merchant. Se non impostata, vale la fee globale.
-          </p>
-          <Link href="/admin/fee-merchant" target="_blank"
-            className="inline-flex items-center gap-2 bg-indigo-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-indigo-700">
-            Apri pannello fee merchant →
-          </Link>
+        <div className="space-y-4">
+          <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 text-sm text-blue-700">
+            Fee globale attuale: <strong>{feeEur}% EUR</strong> · <strong>{feeToken}% Token</strong>.
+            Lascia vuoto per usare quella globale — compila per sovrascrivere solo per quel merchant.
+          </div>
+
+          {merchantFeeRows.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-8">Nessun merchant registrato.</p>
+          ) : (
+            <div className="space-y-3">
+              {merchantFeeRows.map((m) => {
+                const draft = merchantFeeDrafts[m.userId] ?? { eur: "", token: "" };
+                const hasOverride = m.feeEur != null || m.feeToken != null;
+                const savedEur = m.feeEur != null ? String(m.feeEur) : "";
+                const savedToken = m.feeToken != null ? String(m.feeToken) : "";
+                const isDirty = draft.eur !== savedEur || draft.token !== savedToken;
+
+                return (
+                  <div key={m.userId} className={`rounded-xl border px-4 py-4 bg-white ${hasOverride ? "border-indigo-200" : "border-gray-200"}`}>
+                    <div className="flex items-start justify-between gap-4 flex-wrap">
+                      {/* Nome — link che apre scheda dettaglio */}
+                      <div className="min-w-0">
+                        <Link href={`/admin/utenti/${m.userId}`} target="_blank"
+                          className="text-sm font-semibold text-indigo-700 hover:underline">
+                          {m.name} ↗
+                        </Link>
+                        <p className="text-xs text-gray-400 mt-0.5">{[m.sector, m.city].filter(Boolean).join(" · ")}</p>
+                        {hasOverride && (
+                          <span className="inline-block mt-1.5 text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-medium">
+                            Fee personalizzata
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Input fee */}
+                      <div className="flex items-end gap-3 flex-wrap">
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">Fee EUR %</label>
+                          <input
+                            type="number" min="0" max="20" step="0.5"
+                            value={draft.eur}
+                            onChange={(e) => setMerchantFeeDrafts(prev => ({ ...prev, [m.userId]: { ...prev[m.userId], eur: e.target.value } }))}
+                            placeholder={`${m.globalFeeEur}%`}
+                            className="w-24 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">Fee Token %</label>
+                          <input
+                            type="number" min="0" max="20" step="0.5"
+                            value={draft.token}
+                            onChange={(e) => setMerchantFeeDrafts(prev => ({ ...prev, [m.userId]: { ...prev[m.userId], token: e.target.value } }))}
+                            placeholder={`${m.globalFeeToken}%`}
+                            className="w-24 border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleSaveMerchantFee(m.userId)}
+                            disabled={!isDirty || merchantFeeSaving === m.userId}
+                            className="text-sm bg-indigo-600 text-white px-3 py-1.5 rounded-lg hover:bg-indigo-700 disabled:opacity-40"
+                          >
+                            {merchantFeeSaving === m.userId ? "..." : "Salva"}
+                          </button>
+                          {hasOverride && (
+                            <button
+                              onClick={() => handleResetMerchantFee(m.userId)}
+                              disabled={merchantFeeSaving === m.userId}
+                              className="text-sm border border-gray-300 text-gray-600 px-3 py-1.5 rounded-lg hover:bg-gray-50"
+                            >
+                              Reset
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
