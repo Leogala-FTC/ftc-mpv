@@ -34,12 +34,15 @@ export default function UserPage() {
       const uid = authData.user.id;
 
       const [{ data: prof }, { data: wallet }, { data: txs }, merchants] = await Promise.all([
-        supabase.from("profiles").select("full_name,alias,show_alias_only,city").eq("user_id", uid).single(),
+        supabase.from("profiles").select("full_name,alias,show_alias_only,city,onboarding_completed,suspended").eq("user_id", uid).single(),
         supabase.from("wallets").select("token_balance").eq("profile_user_id", uid).single(),
         supabase.from("token_transactions").select("id,direction,amount_tokens,reason,created_at")
           .eq("profile_user_id", uid).order("created_at", { ascending: false }).limit(5),
         getTopMerchants(10),
       ]);
+
+      if (prof?.suspended) { router.push("/?error=suspended"); return; }
+      if (!prof?.onboarding_completed) { router.push("/onboarding"); return; }
 
       setDisplayName(
         prof?.show_alias_only && prof.alias ? prof.alias : prof?.full_name ?? "Utente"

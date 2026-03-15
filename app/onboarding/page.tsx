@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabase-client";
+import { completeOnboarding } from "@/app/actions/onboarding";
 import AddressAutocomplete from "@/app/components/address-autocomplete";
 
 type Role = "user" | "merchant";
@@ -159,31 +160,14 @@ export default function OnboardingPage() {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-
-    if (!isStepTwoValid) {
-      return;
-    }
-
+    if (!isStepTwoValid) return;
     setError(null);
     setLoading(true);
-
-    const supabase = getSupabaseClient();
-    const { data: authData, error: authError } = await supabase.auth.getUser();
-
-    if (authError || !authData.user) {
-      setError("Sessione non valida. Effettua di nuovo l'accesso.");
-      setLoading(false);
-      router.push("/");
-      return;
-    }
-
-    const userId = authData.user.id;
 
     const payload =
       role === "user"
         ? {
-            role,
-            onboarding_completed: true,
+            role: "user" as const,
             full_name: userForm.full_name.trim(),
             alias: userForm.alias.trim() || null,
             show_alias_only: userForm.show_alias_only,
@@ -192,8 +176,7 @@ export default function OnboardingPage() {
             city: userForm.city.trim(),
           }
         : {
-            role,
-            onboarding_completed: true,
+            role: "merchant" as const,
             business_name: merchantForm.ragione_sociale.trim(),
             vat_number: merchantForm.partita_iva.trim(),
             cf: merchantForm.codice_fiscale.trim() || null,
@@ -202,31 +185,18 @@ export default function OnboardingPage() {
             ateco: merchantForm.ateco.trim(),
             pec: merchantForm.pec.trim(),
             iban: merchantForm.iban.trim(),
-            sector: merchantForm.sector, // ora è sempre enum valido
+            sector: merchantForm.sector,
           };
 
-    const userIdUpdate = await supabase
-      .from("profiles")
-      .update(payload)
-      .eq("user_id", userId)
-      .select("user_id")
-      .maybeSingle();
+    const res = await completeOnboarding(payload);
 
-    const updateError = userIdUpdate.error;
-    const updated = Boolean(userIdUpdate.data);
-
-    if (updateError || !updated) {
-      setError(updateError?.message ?? "Impossibile completare l'onboarding. Riprova.");
+    if (!res.success) {
+      setError(res.error ?? "Impossibile completare l'onboarding. Riprova.");
       setLoading(false);
       return;
     }
 
-    if (role === "merchant") {
-      router.push("/merchant");
-      return;
-    }
-
-    router.push("/user");
+    router.push(role === "merchant" ? "/merchant" : "/user");
   };
 
   if (initialLoading) {

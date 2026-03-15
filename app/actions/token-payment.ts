@@ -147,7 +147,7 @@ export async function confirmTokenPayment(sessionId: string) {
 
   if (buyerUpdateError) return { success: false, error: "Errore scalando i token: " + buyerUpdateError.message };
 
-  // 4. Accredita token al merchant
+  // 4. Accredita token al merchant (upsert sicuro)
   const { data: merchantWallet } = await db
     .from("wallets")
     .select("id, token_balance")
@@ -166,14 +166,16 @@ export async function confirmTokenPayment(sessionId: string) {
       return { success: false, error: "Errore accreditando i token al merchant" };
     }
   } else {
-    const { error: insertError } = await db.from("wallets").insert({
+    // Il merchant non ha wallet: crealo. Se già esiste (race condition) ignora il conflitto
+    const { error: insertError } = await db.from("wallets").upsert({
       profile_user_id: session.merchant_user_id,
       token_balance: session.token_amount,
       eur_balance: 0,
-    });
+    }, { onConflict: "profile_user_id", ignoreDuplicates: false });
+
     if (insertError) {
       await db.from("wallets").update({ token_balance: buyerWallet.token_balance }).eq("id", buyerWallet.id);
-      return { success: false, error: "Errore creando wallet merchant" };
+      return { success: false, error: "Errore creando wallet merchant: " + insertError.message };
     }
   }
 

@@ -43,13 +43,16 @@ export default function MerchantPage() {
       const uid = authData.user.id;
 
       const [{ data: prof }, { data: wallet }, { data: txs }, { data: clears }] = await Promise.all([
-        supabase.from("profiles").select("business_name,city,sector").eq("user_id", uid).single(),
+        supabase.from("profiles").select("business_name,city,sector,onboarding_completed,suspended").eq("user_id", uid).single(),
         supabase.from("wallets").select("eur_balance").eq("profile_user_id", uid).single(),
         supabase.from("token_transactions").select("id,direction,amount_tokens,reason,created_at")
           .eq("profile_user_id", uid).order("created_at", { ascending: false }).limit(5),
         supabase.from("clearing_requests").select("id,eur_amount,status,created_at")
           .eq("merchant_user_id", uid).order("created_at", { ascending: false }).limit(3),
       ]);
+
+      if (prof?.suspended) { router.push("/?error=suspended"); return; }
+      if (!prof?.onboarding_completed) { router.push("/onboarding"); return; }
 
       setProfile(prof);
       setEurBalance(Number(wallet?.eur_balance) || 0);

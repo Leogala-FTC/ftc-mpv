@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { getSupabaseClient } from "@/lib/supabase-client";
 import {
   getAdminPayments, getAdminClearings,
@@ -13,12 +14,13 @@ import { getAdminTopupRequests, approveTopupRequest, rejectTopupRequest } from "
 import { adminSendNotification } from "@/app/actions/notifications";
 import { getPlatformSettings, updatePlatformSetting } from "@/app/actions/settings";
 
-type Tab = "users" | "payments" | "clearing" | "wallet" | "topup" | "settings";
+type Tab = "users" | "payments" | "clearing" | "wallet" | "topup" | "settings" | "fee-merchant";
 
 type UserRow = {
   user_id: string; role: string | null; full_name: string | null;
   business_name: string | null; city: string | null; sector: string | null;
   onboarding_completed: boolean | null; created_at: string; suspended: boolean | null;
+  email: string; memberNumberFormatted: string;
 };
 type PaymentRow = {
   id: string; amount_eur: number; fee_eur: number; cashback_tokens: number;
@@ -209,7 +211,6 @@ export default function AdminPage() {
     setSettingsLoading(false);
   }
 
-  const getWallet = (userId: string) => wallets.find((w) => w.profile_user_id === userId);
 
   const updateClearingStatus = async (id: string, status: string) => {
     const res = await updateClearingStatusAction(id, status);
@@ -260,6 +261,7 @@ export default function AdminPage() {
     { id: "clearing", label: "🏦 Prelievi" },
     { id: "topup", label: "📥 Ricariche" },
     { id: "wallet", label: "💰 Wallet" },
+    { id: "fee-merchant", label: "💸 Fee Merchant" },
     { id: "settings", label: "⚙️ Impostazioni" },
   ];
 
@@ -387,10 +389,11 @@ export default function AdminPage() {
                       onChange={toggleSelectAll}
                       className="rounded" />
                   </th>
+                  <th className="px-3 py-2.5 text-left font-medium text-gray-700 hidden sm:table-cell">#</th>
                   <th className="px-3 py-2.5 text-left font-medium text-gray-700">Nome</th>
+                  <th className="px-3 py-2.5 text-left font-medium text-gray-700 hidden lg:table-cell">Email</th>
                   <th className="px-3 py-2.5 text-left font-medium text-gray-700">Ruolo</th>
-                  <th className="px-3 py-2.5 text-left font-medium text-gray-700 hidden sm:table-cell">Settore</th>
-                  <th className="px-3 py-2.5 text-left font-medium text-gray-700 hidden md:table-cell">Città</th>
+                  <th className="px-3 py-2.5 text-left font-medium text-gray-700 hidden md:table-cell">Settore</th>
                   <th className="px-3 py-2.5 text-left font-medium text-gray-700">Stato</th>
                   <th className="px-3 py-2.5 text-right font-medium text-gray-700">Azioni</th>
                 </tr>
@@ -401,9 +404,16 @@ export default function AdminPage() {
                     <td className="px-3 py-2.5">
                       <input type="checkbox" checked={selectedUsers.has(u.user_id)} onChange={() => toggleSelectUser(u.user_id)} className="rounded" />
                     </td>
-                    <td className="px-3 py-2.5 font-medium text-gray-800">
-                      {u.business_name ?? u.full_name ?? <span className="text-gray-400 italic">N/D</span>}
+                    <td className="px-3 py-2.5 hidden sm:table-cell">
+                      <span className="text-xs font-mono text-indigo-600 font-bold">{u.memberNumberFormatted}</span>
                     </td>
+                    <td className="px-3 py-2.5">
+                      <Link href={`/admin/utenti/${u.user_id}`} target="_blank"
+                        className="font-medium text-gray-800 hover:text-indigo-600 hover:underline text-sm">
+                        {u.business_name ?? u.full_name ?? <span className="text-gray-400 italic">N/D</span>}
+                      </Link>
+                    </td>
+                    <td className="px-3 py-2.5 hidden lg:table-cell text-xs text-gray-500 max-w-32 truncate">{u.email || "—"}</td>
                     <td className="px-3 py-2.5">
                       <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
                         u.role === "admin" ? "bg-purple-100 text-purple-700" :
@@ -411,8 +421,7 @@ export default function AdminPage() {
                         "bg-gray-100 text-gray-600"
                       }`}>{u.role ?? "—"}</span>
                     </td>
-                    <td className="px-3 py-2.5 text-gray-500 hidden sm:table-cell">{u.sector ?? "—"}</td>
-                    <td className="px-3 py-2.5 text-gray-500 hidden md:table-cell">{u.city ?? "—"}</td>
+                    <td className="px-3 py-2.5 text-gray-500 hidden md:table-cell text-xs">{u.sector ?? "—"}</td>
                     <td className="px-3 py-2.5">
                       {u.suspended
                         ? <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">Sospeso</span>
@@ -438,7 +447,7 @@ export default function AdminPage() {
                   </tr>
                 ))}
                 {filteredUsers.length === 0 && (
-                  <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-gray-400">Nessun utente trovato</td></tr>
+                  <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-gray-400">Nessun utente trovato</td></tr>
                 )}
               </tbody>
             </table>
@@ -536,17 +545,23 @@ export default function AdminPage() {
               {users
                 .filter((u) => !walletFilter || (u.full_name ?? u.business_name ?? "").toLowerCase().includes(walletFilter.toLowerCase()))
                 .map((u) => {
-                  const w = getWallet(u.user_id);
+                  const w = wallets.find((ww) => ww.profile_user_id === u.user_id);
                   return (
                     <div key={u.user_id} className="flex items-center justify-between rounded-xl border border-gray-100 bg-white px-4 py-3">
                       <div>
                         <p className="text-sm font-medium text-gray-800">{u.business_name ?? u.full_name ?? "—"}</p>
-                        <p className="text-xs text-gray-500">{u.role} · {u.city ?? "—"}</p>
+                        <p className="text-xs text-gray-500">{u.role} · {u.memberNumberFormatted}</p>
                       </div>
                       <div className="flex items-center gap-4">
                         <div className="text-right text-xs">
-                          <p className="font-semibold text-indigo-700">{(w?.token_balance ?? 0).toLocaleString()} tok</p>
-                          <p className="text-gray-500">€{Number(w?.eur_balance ?? 0).toFixed(2)}</p>
+                          {w ? (
+                            <>
+                              <p className="font-semibold text-indigo-700">{Number(w.token_balance).toLocaleString()} tok</p>
+                              <p className="text-gray-500">€{Number(w.eur_balance).toFixed(2)}</p>
+                            </>
+                          ) : (
+                            <p className="text-gray-400 italic">No wallet</p>
+                          )}
                         </div>
                         <button onClick={() => { setWalletTarget({ userId: u.user_id, name: u.business_name ?? u.full_name ?? "—", role: u.role ?? "" }); setCreditType("tokens"); setWalletAmount(""); setWalletReason(""); }}
                           className="text-xs bg-indigo-50 text-indigo-700 border border-indigo-200 px-2 py-1 rounded-lg hover:bg-indigo-100">
@@ -593,6 +608,20 @@ export default function AdminPage() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+
+      {/* ── TAB FEE MERCHANT ──────────────────── */}
+      {tab === "fee-merchant" && (
+        <div className="py-4 text-center">
+          <p className="text-sm text-gray-500 mb-4">
+            Gestisci fee personalizzate per singolo merchant. Se non impostata, vale la fee globale.
+          </p>
+          <Link href="/admin/fee-merchant" target="_blank"
+            className="inline-flex items-center gap-2 bg-indigo-600 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-indigo-700">
+            Apri pannello fee merchant →
+          </Link>
         </div>
       )}
 
