@@ -29,7 +29,6 @@ type ClearingRequest = {
 export default function MerchantPage() {
   const router = useRouter();
   const [profile, setProfile] = useState<Profile | null>(null);
-  const [eurBalance, setEurBalance] = useState<number>(0);
   const [tokenBalance, setTokenBalance] = useState<number>(0);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [clearings, setClearings] = useState<ClearingRequest[]>([]);
@@ -45,7 +44,7 @@ export default function MerchantPage() {
 
       const [{ data: prof }, { data: wallet }, { data: txs }, { data: clears }] = await Promise.all([
         supabase.from("profiles").select("business_name,city,sector,onboarding_completed,suspended").eq("user_id", uid).single(),
-        supabase.from("wallets").select("eur_balance,token_balance").eq("profile_user_id", uid).single(),
+        supabase.from("wallets").select("token_balance").eq("profile_user_id", uid).single(),
         supabase.from("token_transactions").select("id,direction,amount_tokens,reason,created_at")
           .eq("profile_user_id", uid).order("created_at", { ascending: false }).limit(5),
         supabase.from("clearing_requests").select("id,eur_amount,status,created_at")
@@ -56,7 +55,6 @@ export default function MerchantPage() {
       if (!prof?.onboarding_completed) { router.push("/onboarding"); return; }
 
       setProfile(prof);
-      setEurBalance(Number(wallet?.eur_balance) || 0);
       setTokenBalance(Number(wallet?.token_balance) || 0);
       setTransactions(txs ?? []);
       setClearings(clears ?? []);
@@ -90,9 +88,9 @@ export default function MerchantPage() {
       {/* Saldo */}
       <div className="rounded-xl bg-black text-white p-6">
         <p className="text-sm opacity-70 mb-1">Saldo disponibile</p>
-        <p className="text-4xl font-bold">€{eurBalance.toFixed(2)}</p>
+        <p className="text-4xl font-bold">€{(tokenBalance / 11.7).toFixed(2)}</p>
         <p className="text-sm opacity-50 mt-2">
-          {tokenBalance.toLocaleString("it-IT")} token · ≈ €{(tokenBalance / 11.7).toFixed(2)}
+          {tokenBalance.toLocaleString("it-IT")} token
         </p>
       </div>
 

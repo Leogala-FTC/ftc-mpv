@@ -113,7 +113,6 @@ export default function TopupPage() {
               <p className="text-base font-bold text-gray-900 mt-1">{p.label}</p>
               <p className="text-2xl font-bold text-indigo-700 mt-1">€{p.eur}</p>
               <p className="text-sm text-gray-600 mt-1">{p.tokens.toLocaleString()} token</p>
-              <p className="text-xs text-gray-400 mt-0.5">≈ {(p.tokens / 11.7).toFixed(0)} punti valore</p>
               {isSelected && (
                 <div className="absolute top-2.5 right-2.5 w-5 h-5 bg-indigo-600 rounded-full flex items-center justify-center">
                   <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">

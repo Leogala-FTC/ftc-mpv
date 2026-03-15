@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabase-client";
 import { getTopMerchants } from "@/app/actions/settings";
 
-const TOKENS_PER_EURO = 11.7;
 
 type Transaction = { id: string; direction: "in"|"out"; amount_tokens: number; reason: string|null; created_at: string };
 type Merchant = { userId: string; name: string; sector: string; city: string; cashbackPercent: number };
@@ -69,7 +68,7 @@ export default function UserPage() {
       <div className="rounded-xl bg-black text-white p-6">
         <p className="text-sm opacity-70">Saldo FTC</p>
         <p className="text-4xl font-bold mt-1">{balance.toLocaleString("it-IT")} <span className="text-xl font-normal">token</span></p>
-        <p className="text-sm opacity-60 mt-1">≈ €{(balance / TOKENS_PER_EURO).toFixed(2)}</p>
+        <p className="text-sm opacity-60 mt-1">token FTC</p>
       </div>
 
       {/* CTA rapide */}

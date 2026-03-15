@@ -5,7 +5,6 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabaseClient } from "@/lib/supabase-client";
 
-const TOKENS_PER_EURO = 11.7;
 
 type Transaction = {
   id: string;
@@ -99,7 +98,7 @@ export default function WalletPage() {
       <div className="rounded-xl bg-black text-white p-6">
         <p className="text-sm opacity-70">Saldo attuale</p>
         <p className="text-4xl font-bold mt-1">{balance.toLocaleString("it-IT")} <span className="text-xl font-normal">token</span></p>
-        <p className="text-sm opacity-60 mt-1">≈ €{(balance / TOKENS_PER_EURO).toFixed(2)}</p>
+        <p className="text-sm opacity-60 mt-1">token FTC</p>
       </div>
 
       {/* Statistiche */}
@@ -166,7 +165,6 @@ export default function WalletPage() {
                     <p className={`text-sm font-bold ${tx.direction === "in" ? "text-green-600" : "text-red-500"}`}>
                       {tx.direction === "in" ? "+" : "−"}{tx.amount_tokens.toLocaleString()}
                     </p>
-                    <p className="text-xs text-gray-400">≈ €{(tx.amount_tokens / TOKENS_PER_EURO).toFixed(2)}</p>
                   </div>
                 </li>
               );
