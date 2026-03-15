@@ -66,12 +66,12 @@ export default function MerchantClearingPage() {
           <>
             <div className="flex items-end gap-2">
               <span className="text-3xl font-bold text-indigo-700">
-                €{(maxEur + tokenBalance / 11.7).toFixed(2)}
+                €{maxEur.toFixed(2)}
               </span>
-              <span className="text-indigo-400 mb-1 text-sm">saldo totale</span>
+              <span className="text-indigo-400 mb-1 text-sm">saldo EUR</span>
             </div>
             <p className="text-xs text-indigo-400 mt-1">
-              €{maxEur.toFixed(2)} EUR · {tokenBalance.toLocaleString("it-IT")} token (≈ €{(tokenBalance / 11.7).toFixed(2)})
+              {tokenBalance.toLocaleString("it-IT")} token · ≈ €{(tokenBalance / 11.7).toFixed(2)}
             </p>
           </>
         )}

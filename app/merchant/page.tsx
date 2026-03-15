@@ -87,14 +87,12 @@ export default function MerchantPage() {
         {profile?.city && <p className="text-sm text-gray-500 mt-1">{profile.city}{profile.sector ? ` · ${profile.sector}` : ""}</p>}
       </div>
 
-      {/* Saldo unico in EUR (EUR + controvalore token) */}
+      {/* Saldo */}
       <div className="rounded-xl bg-black text-white p-6">
         <p className="text-sm opacity-70 mb-1">Saldo disponibile</p>
-        <p className="text-4xl font-bold">
-          €{(eurBalance + tokenBalance / 11.7).toFixed(2)}
-        </p>
-        <p className="text-sm opacity-50 mt-1">
-          di cui {tokenBalance.toLocaleString("it-IT")} token · €{(tokenBalance / 11.7).toFixed(2)} in token
+        <p className="text-4xl font-bold">€{eurBalance.toFixed(2)}</p>
+        <p className="text-sm opacity-50 mt-2">
+          {tokenBalance.toLocaleString("it-IT")} token · ≈ €{(tokenBalance / 11.7).toFixed(2)}
         </p>
       </div>
 
