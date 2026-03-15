@@ -214,3 +214,14 @@ export async function adminDeleteUser(targetUserId: string) {
 export async function getAdminUsers() {
   return getAdminUsersWithStatus();
 }
+
+/** Wallet della piattaforma FTC (fee accumulate) */
+export async function getPlatformWallet() {
+  await assertAdmin();
+  const db = getServiceClient();
+  const { data } = await db.from("platform_wallet").select("token_balance,updated_at").eq("id", 1).single();
+  return {
+    tokenBalance: Number(data?.token_balance ?? 0),
+    updatedAt: data?.updated_at ?? null,
+  };
+}

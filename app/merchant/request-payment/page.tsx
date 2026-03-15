@@ -197,10 +197,7 @@ export default function RequestPaymentPage() {
           </div>
 
           <div className="bg-white border border-gray-200 rounded-2xl p-6 mb-4">
-            <p className="text-sm text-gray-500 mb-1">Il cliente scansiona e paga</p>
-            <p className="text-3xl font-bold text-indigo-700 mb-4">
-              {session.totalTokens.toLocaleString()} token
-            </p>
+            <p className="text-sm text-gray-500 mb-4">Il cliente scansiona e paga</p>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={qrUrl}

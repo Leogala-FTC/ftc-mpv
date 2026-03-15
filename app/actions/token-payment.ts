@@ -178,7 +178,16 @@ export async function confirmTokenPayment(sessionId: string) {
     }
   }
 
-  // 5. Registra transazioni
+  // 5. Accredita fee tokens al wallet della piattaforma FTC
+  const { data: platformWallet } = await db.from("platform_wallet").select("token_balance").eq("id", 1).single();
+  if (platformWallet) {
+    await db.from("platform_wallet").update({
+      token_balance: Number(platformWallet.token_balance) + session.fee_tokens,
+      updated_at: new Date().toISOString(),
+    }).eq("id", 1);
+  }
+
+  // 6. Registra transazioni
   await db.from("token_transactions").insert([
     {
       profile_user_id: user.id,
@@ -194,7 +203,7 @@ export async function confirmTokenPayment(sessionId: string) {
     },
   ]);
 
-  // 6. Marca sessione completed — SOLO dopo che tutto è andato a buon fine
+  // 7. Marca sessione completed — SOLO dopo che tutto è andato a buon fine
   await db
     .from("token_payment_sessions")
     .update({ status: "completed", buyer_user_id: user.id })

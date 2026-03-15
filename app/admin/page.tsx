@@ -9,6 +9,7 @@ import {
   updateClearingStatus as updateClearingStatusAction,
   adminCreditWallet, adminCreditEur, getAdminWallets,
   adminToggleSuspend, adminDeleteUser, getAdminUsersWithStatus,
+  getPlatformWallet,
 } from "@/app/actions/admin";
 import { getAdminTopupRequests, approveTopupRequest, rejectTopupRequest } from "@/app/actions/topup";
 import { adminSendNotification } from "@/app/actions/notifications";
@@ -99,6 +100,9 @@ export default function AdminPage() {
   const [merchantFeeDrafts, setMerchantFeeDrafts] = useState<Record<string, { eur: string; token: string }>>({});
   const [merchantFeeSaving, setMerchantFeeSaving] = useState<string | null>(null);
 
+  // Platform wallet
+  const [platformTokens, setPlatformTokens] = useState(0);
+
   useEffect(() => {
     async function load() {
       const supabase = getSupabaseClient();
@@ -107,10 +111,10 @@ export default function AdminPage() {
       const { data: profile } = await supabase.from("profiles").select("role").eq("user_id", authData.user.id).single();
       if (profile?.role !== "admin") { router.push("/"); return; }
       try {
-        const [u, p, c, w, t, s, mf] = await Promise.all([
+        const [u, p, c, w, t, s, mf, pw] = await Promise.all([
           getAdminUsersWithStatus(), getAdminPayments(), getAdminClearings(),
           getAdminWallets(), getAdminTopupRequests(), getPlatformSettings(),
-          getAdminMerchantFees(),
+          getAdminMerchantFees(), getPlatformWallet(),
         ]);
         setUsers(u as UserRow[]); setPayments(p); setClearings(c); setWallets(w); setTopupRequests(t);
         setFeeEur(s.fee_eur_percent ?? 5);
@@ -120,6 +124,7 @@ export default function AdminPage() {
         const drafts: Record<string, { eur: string; token: string }> = {};
         rows.forEach((m) => { drafts[m.userId] = { eur: m.feeEur != null ? String(m.feeEur) : "", token: m.feeToken != null ? String(m.feeToken) : "" }; });
         setMerchantFeeDrafts(drafts);
+        setPlatformTokens(pw.tokenBalance);
       } catch (e) { console.error(e); }
       setLoading(false);
     }
@@ -742,6 +747,14 @@ export default function AdminPage() {
       {/* ── TAB IMPOSTAZIONI ───────────────────── */}
       {tab === "settings" && (
         <div className="space-y-6 max-w-lg">
+
+          {/* Wallet Piattaforma FTC */}
+          <div className="bg-black text-white rounded-xl p-5">
+            <p className="text-xs opacity-60 uppercase tracking-wide mb-1 font-semibold">Wallet Piattaforma FTC</p>
+            <p className="text-3xl font-bold">€{(platformTokens / 11.7).toFixed(2)}</p>
+            <p className="text-sm opacity-50 mt-1">{platformTokens.toLocaleString("it-IT")} token accumulati da fee</p>
+          </div>
+
           {/* Fee */}
           <div className="bg-white border border-gray-200 rounded-xl p-5">
             <h2 className="text-base font-semibold text-gray-800 mb-4">💸 Fee di piattaforma</h2>
