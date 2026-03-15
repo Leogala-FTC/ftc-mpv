@@ -53,7 +53,6 @@ export async function completeOnboarding(payload: OnboardingPayload) {
     const { error: walletError } = await db.from("wallets").insert({
       profile_user_id: user.id,
       token_balance: 0,
-      eur_balance: 0,
     });
     if (walletError) return { success: false, error: "Errore creazione wallet: " + walletError.message };
   }

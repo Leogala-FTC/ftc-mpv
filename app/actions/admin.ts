@@ -144,7 +144,7 @@ export async function adminCreditWallet(targetUserId: string, tokenAmount: numbe
     if (error) return { success: false, error: error.message };
   } else {
     const { error } = await db.from("wallets").insert({
-      profile_user_id: targetUserId, token_balance: tokenAmount, eur_balance: 0,
+      profile_user_id: targetUserId, token_balance: tokenAmount,
     });
     if (error) return { success: false, error: error.message };
   }
@@ -172,10 +172,13 @@ export async function adminCreditEur(targetUserId: string, eurAmount: number) {
       .update({ eur_balance: Number(existing.eur_balance) + eurAmount }).eq("id", existing.id);
     if (error) return { success: false, error: error.message };
   } else {
-    const { error } = await db.from("wallets").insert({
-      profile_user_id: targetUserId, token_balance: 0, eur_balance: eurAmount,
+    // Insert nuovo wallet con solo EUR — eur_balance è la colonna da impostare esplicitamente
+    const { error: insErr } = await db.from("wallets").insert({
+      profile_user_id: targetUserId,
+      token_balance: 0,
+      eur_balance: eurAmount,
     });
-    if (error) return { success: false, error: error.message };
+    if (insErr) return { success: false, error: insErr.message };
   }
 
   return { success: true, eurAmount };

@@ -170,7 +170,6 @@ export async function confirmTokenPayment(sessionId: string) {
     const { error: insertError } = await db.from("wallets").upsert({
       profile_user_id: session.merchant_user_id,
       token_balance: session.token_amount,
-      eur_balance: 0,
     }, { onConflict: "profile_user_id", ignoreDuplicates: false });
 
     if (insertError) {
