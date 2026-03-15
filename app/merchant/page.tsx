@@ -87,18 +87,15 @@ export default function MerchantPage() {
         {profile?.city && <p className="text-sm text-gray-500 mt-1">{profile.city}{profile.sector ? ` · ${profile.sector}` : ""}</p>}
       </div>
 
-      {/* Saldi */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="rounded-xl bg-black text-white p-5">
-          <p className="text-xs opacity-60 mb-1 uppercase tracking-wide">Saldo EUR</p>
-          <p className="text-3xl font-bold">€{eurBalance.toFixed(2)}</p>
-          <p className="text-xs opacity-40 mt-1">Da vendite FTC</p>
-        </div>
-        <div className="rounded-xl bg-indigo-600 text-white p-5">
-          <p className="text-xs opacity-70 mb-1 uppercase tracking-wide">Token ricevuti</p>
-          <p className="text-3xl font-bold">{tokenBalance.toLocaleString("it-IT")}</p>
-          <p className="text-xs opacity-60 mt-1">≈ €{(tokenBalance / 11.7).toFixed(2)}</p>
-        </div>
+      {/* Saldo unico in EUR (EUR + controvalore token) */}
+      <div className="rounded-xl bg-black text-white p-6">
+        <p className="text-sm opacity-70 mb-1">Saldo disponibile</p>
+        <p className="text-4xl font-bold">
+          €{(eurBalance + tokenBalance / 11.7).toFixed(2)}
+        </p>
+        <p className="text-sm opacity-50 mt-1">
+          di cui {tokenBalance.toLocaleString("it-IT")} token · €{(tokenBalance / 11.7).toFixed(2)} in token
+        </p>
       </div>
 
       {/* Azioni */}

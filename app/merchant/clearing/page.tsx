@@ -6,6 +6,7 @@ import { getSupabaseClient } from "@/lib/supabase-client";
 
 export default function MerchantClearingPage() {
   const [eurBalance, setEurBalance] = useState<number | null>(null);
+  const [tokenBalance, setTokenBalance] = useState<number>(0);
   const [eurAmount, setEurAmount] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingBalance, setLoadingBalance] = useState(true);
@@ -18,10 +19,11 @@ export default function MerchantClearingPage() {
       if (!authData.user) return;
       const { data: wallet } = await supabase
         .from("wallets")
-        .select("eur_balance")
+        .select("eur_balance,token_balance")
         .eq("profile_user_id", authData.user.id)
         .single();
       setEurBalance(Number(wallet?.eur_balance) || 0);
+      setTokenBalance(Number(wallet?.token_balance) || 0);
       setLoadingBalance(false);
     }
     loadBalance();
@@ -64,12 +66,12 @@ export default function MerchantClearingPage() {
           <>
             <div className="flex items-end gap-2">
               <span className="text-3xl font-bold text-indigo-700">
-                €{maxEur.toFixed(2)}
+                €{(maxEur + tokenBalance / 11.7).toFixed(2)}
               </span>
-              <span className="text-indigo-400 mb-1 text-sm">da vendite FTC</span>
+              <span className="text-indigo-400 mb-1 text-sm">saldo totale</span>
             </div>
             <p className="text-xs text-indigo-400 mt-1">
-              ≈ {Math.floor(maxEur * 11.7).toLocaleString("it-IT")} token
+              €{maxEur.toFixed(2)} EUR · {tokenBalance.toLocaleString("it-IT")} token (≈ €{(tokenBalance / 11.7).toFixed(2)})
             </p>
           </>
         )}
