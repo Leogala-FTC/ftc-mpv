@@ -52,13 +52,12 @@ export async function createClearingRequest(eurAmount: number) {
       .eq("user_id", user.id)
       .single();
 
-    // Inserisce clearing request
+    // Inserisce clearing request (eur_amount omesso: schema cache non aggiornata)
     const { data: clearing, error: clearingError } = await db
       .from("clearing_requests")
       .insert({
         merchant_user_id: user.id,
         token_amount: tokenAmount,
-        eur_amount: eurAmount,
         iban: profile?.iban ?? null,
         status: "pending",
       })
